@@ -1,0 +1,324 @@
+---
+description: Implement từng task trong checklist. Trigger: /implement <tasks-file>, "next task", "continue implementation"
+globs:
+alwaysApply: false
+---
+
+# Rule: Implementation
+
+## Trigger
+
+Kích hoạt rule này khi người dùng gõ một trong các lệnh sau vào chat:
+
+```
+/implement <tasks_file_path>
+/implement <tasks_file_path> --task <task-id>
+/implement (sau khi breakdown vừa được tạo trong cùng conversation)
+next task
+continue implementation
+```
+
+Ví dụ:
+```
+/implement docs/tasks/tasks_create-user-auth.md
+/implement docs/tasks/tasks_create-user-auth.md --task APP-03
+/implement          ← tiếp tục từ tasks đã được tạo trong conversation
+next task           ← implement task tiếp theo chưa completed
+```
+
+---
+
+## Mục tiêu
+
+Nhận task list **từ file path hoặc trực tiếp từ context chat**, tự động:
+1. Xác định task nào chưa hoàn thành
+2. Đọc TDD liên quan để hiểu context đầy đủ
+3. Implement từng task theo đúng coding standards
+4. Cập nhật checklist ngay sau khi hoàn thành
+5. Gợi ý commit message chuẩn Conventional Commits
+
+---
+
+## Workflow
+
+### Bước 1 — Resolve Task Source
+
+**Trường hợp A — Có file path:**
+Đọc file tasks từ path. Parse toàn bộ checklist. Xác định các task `- [ ]` chưa hoàn thành.
+
+**Trường hợp B — Có `--task <id>`:**
+Chỉ implement task có ID đó. Ví dụ: `--task APP-03` chỉ implement task `APP-03`.
+
+**Trường hợp C — `/implement` hoặc `next task` không có path:**
+Kiểm tra conversation hiện tại. Nếu rule `03_breakdown_generator` vừa chạy,
+sử dụng task list đó. Tìm task `- [ ]` đầu tiên chưa completed.
+
+**Trường hợp D — `continue implementation`:**
+Đọc lại file tasks (nếu đã biết path), tìm task `- [ ]` tiếp theo để implement.
+
+---
+
+### Bước 2 — Đọc Knowledge Base (BẮT BUỘC)
+
+**Nếu `.codegraph/` tồn tại trong project root:**
+
+```
+codegraph_explore("How does [feature liên quan đến task] work?")
+codegraph_search("[ClassName hoặc InterfaceName cần implement]")
+codegraph_impact("[MethodName]")  ← nếu task có modify existing method
+```
+→ Dùng kết quả để xác định file paths → chỉ Read file cần thiết.
+
+**Sau đó (hoặc nếu không có CodeGraph), đọc theo thứ tự:**
+
+**1. `docs/KB_INDEX.md`** (nếu tồn tại) — xác định tài liệu nào cần đọc thêm
+
+**2. `docs/project_overview.md`** — ĐỌC TOÀN BỘ, đây là nền tảng:
+   - Architecture patterns (Clean Architecture, CQRS, Repository...)
+   - Entity names — dùng đúng tên thực tế của project
+   - Naming conventions (file paths, class names, interface names)
+   - Folder structure — đặt file đúng chỗ
+   - .NET 6 constraints
+
+**3. TDD hoặc SPEC liên quan** — đọc nếu task file có reference:
+   - `docs/tdd/tdd_[feature].md` (nếu Cursor tạo)
+   - `.ai/specs/SPEC-[name].md` (nếu Claude tạo)
+   - `.ai/plans/PLAN-[name].md` (nếu Claude tạo)
+
+**4. Files source code** liên quan đến task cụ thể — đọc TRƯỚC khi viết code:
+   - File sẽ bị modify — hiểu existing implementation
+   - Interface file — match signatures chính xác
+   - DI registration file — biết cách đăng ký
+
+> ⚠️ Không đọc `docs/project_overview.md` = không implement.
+> File này chứa naming conventions, patterns, và folder structure
+> mà nếu sai sẽ phá vỡ kiến trúc cả project.
+
+---
+
+### Bước 3 — Xác nhận trước khi implement
+
+Trình bày tóm tắt plan và hỏi xác nhận:
+
+```
+📋 Chuẩn bị implement: Task [ID] — [Task Description]
+
+Files sẽ được tạo/sửa:
+  ➕ CREATE: [file path 1]
+  ✏️  MODIFY: [file path 2]
+  
+Dependencies: [list]
+Estimated complexity: [Low/Medium/High]
+
+Proceed? (yes / skip / show details)
+```
+
+Nếu người dùng gõ `yes` hoặc `y` → tiến hành implement.
+Nếu gõ `skip` → bỏ qua task này, chuyển sang task tiếp theo.
+Nếu gõ `show details` → hiển thị đầy đủ TDD section liên quan trước khi hỏi lại.
+
+---
+
+### Bước 4 — Implement Task
+
+#### Coding Standards (bắt buộc tuân theo)
+
+> **Language-agnostic**: Rule này hoạt động với mọi tech stack. AI tự điều chỉnh conventions
+> theo ngôn ngữ của project (C#, Java, TypeScript, Python, Go...).
+> Đọc `docs/project_overview.md` và code hiện tại để xác định conventions chuẩn của project.
+
+**Naming conventions — áp dụng theo ngôn ngữ của project:**
+- C# / Java: PascalCase cho class/method, camelCase cho variables
+- TypeScript / JavaScript: camelCase cho variables/functions, PascalCase cho classes/components
+- Python: snake_case cho variables/functions, PascalCase cho classes
+- Luôn tuân theo naming convention đang có trong codebase — không tự đổi style
+
+**Async / concurrency:**
+- Dùng async/await (hoặc tương đương trong ngôn ngữ) cho mọi I/O operations
+- Không block main thread: không dùng `.Result` hay `.Wait()` trong C#, không dùng sync calls trong Node.js
+- Pass `CancellationToken` (hoặc tương đương) xuyên suốt call chain
+
+**Docstrings / comments bắt buộc cho mọi public method:**
+```
+// C#:
+/// <summary>[Mô tả]</summary>
+/// <param name="x">[Mô tả]</param>
+/// <returns>[Mô tả]</returns>
+
+// Java:
+/** [Mô tả] @param x [Mô tả] @return [Mô tả] */
+
+// TypeScript / JavaScript:
+/** [Mô tả] @param x - [Mô tả] @returns [Mô tả] */
+
+// Python:
+"""[Mô tả]. Args: x: [Mô tả]. Returns: [Mô tả]."""
+```
+
+**Architecture patterns (không được vi phạm — đọc từ project_overview.md):**
+- CQRS: Commands và Queries tách biệt, dùng MediatR hoặc tương đương
+- UnitOfWork: Mọi DB write qua UnitOfWork/transaction, không inject DbContext/Session trực tiếp
+- Value Objects: Dùng Value Objects / strongly-typed wrappers thay vì primitive types
+- Circuit Breaker: Wrap mọi external service call bằng circuit breaker nếu project đang dùng
+- Dependency Inversion: Không tạo dependency ngược chiều giữa các layer
+- FluentValidation: Validator riêng cho mỗi Command/Query
+- Clean Architecture: Không có dependency ngược chiều (Domain ← Application ← Infrastructure ← Web)
+
+#### Checklist tự kiểm tra trước khi mark done
+
+Trước khi mark task complete, AI phải tự kiểm tra:
+- [ ] Code compile được (không có syntax error rõ ràng)
+- [ ] Đúng file path như đã định nghĩa trong task
+- [ ] Có docstrings cho mọi public method
+- [ ] Có unit test (nếu task yêu cầu)
+- [ ] Không vi phạm architecture rules
+- [ ] Không hardcode string/magic number (dùng constants hoặc config)
+- [ ] Async methods đặt tên đúng convention của ngôn ngữ (suffix `Async` với C#, `async def` với Python...)
+- [ ] Cancellation/context token được pass through đúng cách nếu ngôn ngữ có hỗ trợ
+
+---
+
+### Bước 5 — Xử lý vấn đề phát sinh
+
+**Nếu gặp ambiguity trong TDD:**
+```
+⚠️ STOP — Cần clarification trước khi tiếp tục Task [ID]:
+
+Vấn đề: [mô tả vấn đề cụ thể]
+Các options:
+  A) [Option A]
+  B) [Option B]
+
+TDD reference: [section cụ thể trong TDD]
+Bạn muốn chọn option nào, hoặc có approach khác?
+```
+
+**Nếu TDD không đủ thông tin:**
+```
+⚠️ STOP — TDD thiếu thông tin cho Task [ID]:
+
+Cần biết: [thông tin còn thiếu]
+Đề xuất update TDD tại: [section] trước khi implement.
+
+Bạn có muốn tôi đề xuất nội dung cập nhật cho TDD không?
+```
+
+**Nếu phát hiện conflict với code hiện tại:**
+```
+⚠️ STOP — Phát hiện conflict:
+
+Task [ID] yêu cầu [X], nhưng code hiện tại tại [file:line] đang làm [Y].
+Đây có thể là:
+  1. TDD cần cập nhật
+  2. Code hiện tại cần refactor trước
+  3. Approach khác được áp dụng
+
+Hướng xử lý đề xuất: [đề xuất cụ thể]
+```
+
+---
+
+### Bước 6 — Cập nhật Checklist
+
+Ngay sau khi hoàn thành và self-verify task, cập nhật file tasks:
+
+```markdown
+- [x] Task APP-03: Implement `CreateXxxCommandHandler` (Completed)
+```
+
+Thêm `[x]` và `(Completed)` vào cuối. Cập nhật dòng progress counter ở đầu file:
+```markdown
+> Progress: 3 / 12 tasks completed
+```
+
+**Không được mark done nếu chưa tự verify xong checklist ở Bước 4.**
+
+---
+
+### Bước 7 — Thông báo và Commit
+
+```
+✅ Task [ID] hoàn thành: [Task Description]
+
+Files đã thay đổi:
+  ➕ CREATED: [file1]
+  ✏️  MODIFIED: [file2]
+
+Progress: [X] / [Total] tasks completed
+
+💬 Suggested commit message:
+   [type]: [description]
+   
+   [optional body nếu cần giải thích thêm]
+
+🚀 Gõ "next task" để tiếp tục, hoặc "commit" để tôi tạo commit message chi tiết hơn.
+```
+
+**Conventional Commits format:**
+- `feat(scope): description` — tính năng mới
+- `fix(scope): description` — bug fix
+- `refactor(scope): description` — refactor không thêm feature
+- `test(scope): description` — thêm tests
+- `chore(scope): description` — build scripts, tooling
+- `docs(scope): description` — documentation
+
+Ví dụ:
+```
+feat(auth): add JWT authentication command handler
+
+- Implement CreateUserAuthCommand with FluentValidation
+- Add JwtTokenService with circuit breaker
+- Unit tests for happy path and validation failures
+```
+
+---
+
+### Bước 8 — Kết thúc Feature
+
+Khi tất cả tasks đã được mark `[x]`:
+
+```
+🎉 Feature [Feature Name] đã hoàn thành!
+
+📊 Summary:
+  ✅ [N] tasks completed
+  ➕ [N] files created
+  ✏️  [N] files modified
+  🧪 [N] test files added
+
+📝 Recommended final steps:
+  1. Run tests: dotnet test
+  2. Review migration: dotnet ef migrations script
+  3. Update TDD status → "Implemented"
+  4. Create PR với description từ TDD Overview
+
+🔖 Suggested PR title:
+   feat: [Feature Name] — [one-line summary from TDD]
+```
+
+---
+
+## Lưu ý quan trọng
+
+- **Một task tại một thời điểm**: Không implement nhiều tasks song song. Hoàn thành, verify, update checklist, rồi mới chuyển task tiếp.
+- **Context window awareness**: Nếu conversation quá dài, nhắc người dùng: "Để đảm bảo context đầy đủ, hãy bắt đầu conversation mới và gõ lại `/implement [path] --task [next-task-id]`."
+- **Không assume**: Nếu không chắc về behavior của một class/method hiện có, đọc file đó trước khi viết code sử dụng nó.
+- **Idempotent**: Trước khi tạo file mới, kiểm tra file đó đã tồn tại chưa. Nếu có, đề nghị review thay vì ghi đè.
+
+---
+
+## .NET 6 Standards — Quick Checklist (áp dụng khi project là .NET)
+
+> File `.cs` đang mở? Rule `10_sk_dotnet_impl.mdc` tự load qua globs.
+> Nếu không thấy, gõ: `apply dotnet standards`
+
+Trước khi mark task done, tự kiểm tra:
+
+- [ ] `AsNoTracking()` trên mọi read-only query
+- [ ] Không có `.Result` / `.Wait()` — async all the way
+- [ ] `CancellationToken` được truyền qua toàn bộ chain
+- [ ] Không inject Scoped service vào Singleton
+- [ ] `HttpClient` qua `IHttpClientFactory`, không `new HttpClient()`
+- [ ] Không dùng primary constructors / `FrozenDictionary` / `AddResilienceHandler` (.NET 6!)
+- [ ] DB exceptions đúng provider: MySQL → `MySqlException.Number` / PG → `PostgresException.SqlState`
+- [ ] Exception: `throw;` không `throw ex;` — giữ stack trace

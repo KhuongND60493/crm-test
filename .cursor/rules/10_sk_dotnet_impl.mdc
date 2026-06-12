@@ -1,0 +1,256 @@
+---
+description: .NET 6 implementation standards — EF Core, async, PostgreSQL errors, Polly v7, resource management. Auto-loads when editing C# files.
+globs:
+  - "**/*.cs"
+  - "**/*.csproj"
+alwaysApply: false
+---
+
+# .NET 6 — Implementation Standards
+
+> ⚠️ Target: .NET 6 · C# 10 · EF Core 6 · Polly **v7** · Npgsql · MediatR  
+> Domain: F&B Enterprise — Dcorp Vietnam
+
+---
+
+## 1. EF Core 6 — Query Rules
+
+**KHÔNG BAO GIỜ:**
+```csharp
+// ❌ Full table scan
+await _db.Orders.ToListAsync(ct);
+
+// ❌ N+1
+foreach (var o in orders)
+    o.Items = await _db.OrderItems.Where(i => i.OrderId == o.Id).ToListAsync();
+
+// ❌ Load entity chỉ để update 1 field
+var m = await _db.MenuItems.FindAsync(id);
+m.Price = newPrice;
+await _db.SaveChangesAsync();
+```
+
+**LUÔN DÙNG:**
+```csharp
+// ✅ Project → DTO tại DB
+var dto = await _db.Orders.AsNoTracking()
+    .Where(o => o.Id == id)
+    .Select(o => new OrderDto {
+        Id = o.Id, Status = o.Status,
+        Total = o.Items.Sum(i => i.Qty * i.Price)
+    }).FirstOrDefaultAsync(ct);
+
+// ✅ Pagination bắt buộc
+var page = await _db.Orders.AsNoTracking()
+    .Where(o => o.StoreId == storeId)
+    .OrderByDescending(o => o.CreatedAt)
+    .Skip(req.Page * req.PageSize).Take(req.PageSize)
+    .Select(o => new OrderSummaryDto { ... }).ToListAsync(ct);
+
+// ✅ Batch load (diệt N+1)
+var items = await _db.OrderItems.AsNoTracking()
+    .Where(i => orderIds.Contains(i.OrderId)).ToListAsync(ct);
+var byOrder = items.ToLookup(i => i.OrderId);
+
+// ✅ Update không load entity
+var entry = new MenuItem { Id = id, Price = newPrice };
+_db.MenuItems.Attach(entry);
+_db.Entry(entry).Property(x => x.Price).IsModified = true;
+await _db.SaveChangesAsync(ct);
+
+// ✅ Count tại DB
+var count = await _db.Orders.Where(o => o.StoreId == sid).CountAsync(ct);
+```
+
+---
+
+## 2. Async / CancellationToken
+
+```csharp
+// ❌ Block thread pool → deadlock dưới tải cao
+var r = _service.GetAsync().Result;
+
+// ❌ async void → unhandled exception crash process
+public async void Handle(object sender, EventArgs e) { ... }
+
+// ✅ Async all the way + CT propagation
+public async Task<Result<OrderDto>> GetOrderAsync(Guid id, CancellationToken ct)
+{
+    var dto = await _db.Orders.AsNoTracking()
+        .Where(o => o.Id == id)
+        .Select(o => new OrderDto { Id = o.Id, Status = o.Status })
+        .FirstOrDefaultAsync(ct);
+    return dto is null
+        ? Result.Failure<OrderDto>(OrderErrors.NotFound(id))
+        : Result.Success(dto);
+}
+
+// ✅ ValueTask — hot path cache hit (tránh Task alloc)
+public ValueTask<MenuDto?> GetCachedMenuAsync(Guid storeId)
+{
+    if (_cache.TryGetValue($"menu:{storeId}", out MenuDto? cached))
+        return new ValueTask<MenuDto?>(cached);
+    return new ValueTask<MenuDto?>(FetchMenuFromDbAsync(storeId));
+}
+
+// ✅ Parallel I/O — .NET 6
+var storeTask = _storeRepo.GetAsync(storeId, ct);
+var menuTask  = _menuRepo.GetActiveAsync(storeId, ct);
+await Task.WhenAll(storeTask, menuTask);
+var store = storeTask.Result;  // .Result an toàn SAU WhenAll
+```
+
+---
+
+## 3. DB Error Handling (MySQL / PostgreSQL)
+
+> **Đọc `docs/project_overview.md`** để biết project dùng DB gì trước khi implement.
+
+```csharp
+// ── MySQL (Pomelo) ─────────────────────────────────────────
+// Package: Pomelo.EntityFrameworkCore.MySql
+// MySqlException.Number codes:
+//   1062 = Duplicate entry (unique violation)
+//   1451 = FK constraint (cannot delete parent)
+//   1452 = FK constraint (no parent row)
+//   1213 = Deadlock found
+//   1205 = Lock wait timeout
+
+catch (OperationCanceledException) { throw; }
+catch (DbUpdateException ex) when (
+    ex.InnerException is MySqlException my && my.Number == 1062)
+    => Result.Failure(DbErrors.DuplicateKey);
+catch (DbUpdateException ex) when (
+    ex.InnerException is MySqlException my && my.Number == 1213)
+    => Result.Failure(DbErrors.Deadlock);
+
+// ── PostgreSQL (Npgsql) ────────────────────────────────────
+// catch (DbUpdateException ex) when (
+//     ex.InnerException is PostgresException pg
+//     && pg.SqlState == "23505")  // UniqueViolation
+//     => Result.Failure(DbErrors.DuplicateKey);
+
+// ── Common (cả hai) ────────────────────────────────────────
+catch (DbUpdateConcurrencyException)
+    => Result.Failure(DbErrors.ConcurrencyConflict);
+// KHÔNG: catch (Exception) { return null; } — silent failure
+// KHÔNG: throw ex; → dùng throw; giữ stack trace
+```
+
+---
+
+## 4. Polly v7 — KHÔNG dùng Polly v8 / AddResilienceHandler
+
+```csharp
+// ✅ DB retry — Polly v7 syntax
+Policy.Handle<DbUpdateException>(ex =>
+        ex.InnerException is PostgresException pg
+        && (pg.SqlState == PgErrorCodes.DeadlockDetected
+            || pg.SqlState == PgErrorCodes.SerializationFailure))
+    .WaitAndRetryAsync(3,
+        attempt => TimeSpan.FromMilliseconds(Math.Pow(2, attempt) * 100)
+                   + TimeSpan.FromMilliseconds(Random.Shared.Next(0, 100)),
+        onRetry: (ex, ts, attempt, _) =>
+            _logger.LogWarning(ex, "DB retry {Attempt}/3", attempt));
+
+// ✅ HTTP circuit breaker — Polly v7
+Policy<HttpResponseMessage>
+    .Handle<HttpRequestException>()
+    .OrResult(r => r.StatusCode is
+        HttpStatusCode.ServiceUnavailable or HttpStatusCode.TooManyRequests)
+    .CircuitBreakerAsync(5, TimeSpan.FromSeconds(20),
+        onBreak:  (_, d) => _logger.LogError("Circuit OPEN {Duration}s", d.TotalSeconds),
+        onReset:  ()     => _logger.LogInformation("Circuit CLOSED"));
+
+// ✅ Registration — AddPolicyHandler (KHÔNG AddResilienceHandler)
+services.AddHttpClient<IPosApiClient, PosApiClient>(c => {
+    c.BaseAddress = new Uri(config["PosApi:BaseUrl"]!);
+    c.Timeout = TimeSpan.FromSeconds(10);
+}).AddPolicyHandler(ResiliencePolicies.GetHttpRetryPolicy(logger))
+  .AddPolicyHandler(ResiliencePolicies.GetCircuitBreakerPolicy(logger));
+```
+
+---
+
+## 5. Resource Management & DI
+
+```csharp
+// DI Lifetimes:
+// Singleton  → IMemoryCache, HttpClientFactory, ActivitySource, Meter, IOptions<T>
+// Scoped     → DbContext, IUnitOfWork, ICurrentUser, IOptionsSnapshot<T>
+// Transient  → Validators, mappers, calculators
+// ⚠️ Không inject Scoped vào Singleton → captive dependency
+
+// ✅ BackgroundService — dùng IServiceScopeFactory
+public sealed class MetricsWorker : BackgroundService
+{
+    private readonly IServiceScopeFactory _scopeFactory;
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            try {
+                await using var scope = _scopeFactory.CreateAsyncScope();
+                await scope.ServiceProvider
+                    .GetRequiredService<IMetricsPusher>()
+                    .PushBatchAsync(stoppingToken);
+            }
+            catch (OperationCanceledException) { break; }
+            catch (Exception ex) {
+                _logger.LogError(ex, "Batch failed");
+                await Task.Delay(30_000, stoppingToken); continue;
+            }
+            await Task.Delay(_opts.CurrentValue.IntervalMs, stoppingToken);
+        }
+    }
+}
+
+// ✅ Transaction — ngắn nhất có thể
+await using var tx = await _db.Database
+    .BeginTransactionAsync(IsolationLevel.ReadCommitted, ct);
+try   { _db.Orders.Add(order); await _db.SaveChangesAsync(ct); await tx.CommitAsync(ct); }
+catch { await tx.RollbackAsync(ct); throw; }
+// Side effects (publish event) SAU commit
+```
+
+---
+
+## 6. .NET 6 / C# 10 — Bảng giới hạn
+
+| ❌ KHÔNG dùng | Chỉ có từ | ✅ Thay thế .NET 6 |
+|---|---|---|
+| Primary constructors `class S(IRepo r)` | C# 12 | Standard constructor |
+| Collection expressions `[1, 2, 3]` | C# 12 | `new List<int> { 1, 2, 3 }` |
+| `FrozenDictionary<K,V>` | .NET 8 | `IReadOnlyDictionary<K,V>` |
+| `SearchValues<T>` | .NET 8 | `HashSet<T>` |
+| `TimeProvider` | .NET 8 | `DateTimeOffset.UtcNow` |
+| `IExceptionHandler` | .NET 8 | Custom middleware |
+| `AddResilienceHandler` | Polly v8 / .NET 7 | `AddPolicyHandler` (Polly v7) |
+| `[GeneratedRegex]` | .NET 7 | `new Regex(p, RegexOptions.Compiled)` |
+| `ArgumentException.ThrowIfNullOrEmpty` | .NET 7 | Manual null/empty check |
+
+**✅ OK trong .NET 6:** `record` · `init` · `IAsyncEnumerable<T>` · `Span<T>` · `ArrayPool<T>` · `ValueTask<T>` · `Random.Shared` · `ArgumentNullException.ThrowIfNull` · `CreateAsyncScope()` · `EF.CompileAsyncQuery` · `IOptionsMonitor<T>` · `DbContextPool`
+
+---
+
+## 7. Observability
+
+```csharp
+// ✅ Structured logging — KHÔNG string interpolation
+_logger.LogInformation(
+    "Order {OrderId} created for Store {StoreId}. Total: {Total:C}",
+    order.Id, order.StoreId, order.Total);
+
+// ❌ Interpolation + ❌ Log PII
+_logger.LogInformation($"Order {order.Id}");         // BAD — no structure
+_logger.LogDebug("Token: {Token}", jwtToken);         // BAD — PII
+
+// ✅ LogError phải pass exception object — không chỉ .Message
+_logger.LogError(ex, "Order {OrderId} failed", orderId);  // ✅
+_logger.LogError($"Error: {ex.Message}");                 // ❌ mất stack trace
+
+// ✅ OpenTelemetry span
+using var activity = AppTelemetry.Source.StartActivity("Order.Create");
+activity?.SetTag("store.id", cmd.StoreId.ToString());
+activity?.SetTag("order.item_count", cmd.Items.Count);
+```

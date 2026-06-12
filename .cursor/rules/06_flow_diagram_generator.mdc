@@ -1,0 +1,455 @@
+---
+description: Sinh flow diagrams và sequence diagrams. Trigger: /flow <description> hoặc /diagram <description>
+globs:
+alwaysApply: false
+---
+
+# Rule: Flow Diagram Generator
+
+## Trigger
+
+Kích hoạt rule này khi người dùng gõ một trong các lệnh sau vào chat:
+
+```
+/flow <mô tả luồng>
+/diagram <mô tả luồng>
+/flow <tên-file-không-có-extension> --update
+```
+
+Ví dụ:
+```
+/flow luồng online order: nhận đơn từ on-ramp qua POST /api/orders, xử lý qua Agent, on-ramp query status qua GET /api/orders/{id}/status
+/flow luồng xác thực người dùng qua JWT
+/diagram payment flow khi checkout tại POS
+
+# Cập nhật diagram đã có (dùng tên file không có .md):
+/flow dat-ban-online --update        ← cập nhật docs/diagrams/dat-ban-online.md
+/flow online-order-flow --update     ← cập nhật docs/diagrams/online-order-flow.md
+```
+
+---
+
+## Mục tiêu
+
+Nhận mô tả luồng nghiệp vụ **bằng ngôn ngữ tự nhiên từ chat**, tự động:
+1. Đọc `docs/project_overview.md` để hiểu patterns, naming conventions, tech stack
+2. Đọc toàn bộ call chain liên quan (controller → handler → service → repo → entity)
+3. Hỏi user loại diagram muốn vẽ (nếu không chỉ định)
+4. Sinh ra file `.md` chứa Mermaid diagrams chuẩn hóa
+5. Hỗ trợ `--update` để cập nhật diagram đã có sau khi code thay đổi
+
+---
+
+## Workflow
+
+### Bước 1 — Đọc Project Context
+
+Tự động đọc `docs/project_overview.md` để nắm:
+- Architecture patterns (CQRS, DDD, Clean Architecture...)
+- Naming conventions của project (Controller suffix, Handler suffix...)
+- Tech stack (framework, messaging, caching...)
+- Key domain entities liên quan đến flow được mô tả
+
+Nếu file không tồn tại:
+```
+⚠️ Không tìm thấy docs/project_overview.md.
+   Tôi sẽ scan codebase trực tiếp. Để kết quả chính xác hơn,
+   hãy chạy /generate-overview trước.
+```
+Tiếp tục bằng cách scan thư mục root.
+
+---
+
+### Bước 2 — Parse Flow Request
+
+Từ input của người dùng, trích xuất:
+- **Flow name**: tên ngắn gọn để đặt tên file (kebab-case)
+- **Actors/Participants**: các thành phần tham gia (Client, API, Service, Queue...)
+- **Entry points**: endpoint/method/event bắt đầu luồng
+- **Expected outcomes**: kết quả cuối cùng của luồng
+- **Implicit context**: các bước có thể suy ra từ codebase (validation, auth, caching...)
+
+---
+
+### Bước 3 — Scan Toàn Bộ Call Chain
+
+Đây là bước quan trọng nhất. Với mỗi entry point được xác định, thực hiện scan theo chiều sâu:
+
+#### Level 1 — Presentation Layer
+Tìm và đọc:
+- Controller action / Minimal API endpoint / Blazor component liên quan
+- Route, HTTP method, request/response types
+- Middleware được apply (Auth, RateLimit, Logging...)
+
+#### Level 2 — Application Layer
+Từ Controller, trace xuống:
+- Command/Query được dispatch (MediatR hoặc tương đương)
+- Handler xử lý command/query đó — đọc **toàn bộ** method body
+- Validator nếu có
+- Pipeline behaviors được kích hoạt (logging, caching, transaction...)
+
+#### Level 3 — Domain Layer
+Từ Handler, trace xuống:
+- Entity methods được gọi
+- Domain events được raise
+- Business rules / invariants được kiểm tra
+- Value objects được tạo/validate
+
+#### Level 4 — Infrastructure Layer
+Từ Handler/Domain, trace xuống:
+- Repository methods được gọi → xác định loại query (read/write/join...)
+- External service calls (HTTP, gRPC, messaging...)
+- Cache reads/writes
+- Event publishing (Kafka/RabbitMQ topics/queues)
+
+#### Level 5 — Cross-cutting Concerns
+Xác định:
+- Transaction boundaries (UnitOfWork.SaveChangesAsync)
+- Circuit breaker wrapping
+- Retry policies
+- Background jobs triggered
+
+**Khi đọc mỗi file, ghi nhận:**
+- File path và method name chính xác
+- Input parameters và return types
+- Các nhánh logic quan trọng (if/switch/try-catch)
+- Async/await patterns
+
+---
+
+### Bước 4 — Hỏi Diagram Type
+
+Sau khi scan xong, hỏi:
+
+```
+✅ Đã scan [N] files liên quan đến flow "[Flow Name]".
+
+Bạn muốn vẽ loại diagram nào?
+
+A) 📊 Sequence Diagram   — Thể hiện thứ tự message/call giữa các components
+B) 🔄 Activity Diagram   — Thể hiện logic flow với decision points và parallel paths  
+C) 🗃️  ERD               — Thể hiện data model và relationships của các entities liên quan
+D) 🏗️  Component Diagram — Thể hiện dependencies và interfaces giữa các layer/module
+E) 📋 All               — Sinh tất cả các loại trên
+
+Hoặc gõ "proceed" để tôi chọn loại phù hợp nhất dựa trên flow.
+```
+
+Nếu user gõ `proceed`, áp dụng logic sau:
+- Flow có nhiều actors và calls theo thứ tự → **Sequence**
+- Flow có nhiều decision/branch → **Activity**
+- Flow liên quan đến data model mới → **ERD**
+- Flow thể hiện module integration → **Component**
+- Feature phức tạp → **All**
+
+---
+
+### Bước 5 — Sinh Mermaid Diagrams
+
+#### 5.1 Sequence Diagram
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Client
+    participant MW as Middleware
+    participant API as [ControllerName]
+    participant MED as MediatR
+    participant H as [HandlerName]
+    participant V as [ValidatorName]
+    participant R as [RepositoryName]
+    participant DB as Database
+    participant EXT as [ExternalService] %%% Chỉ thêm nếu có
+
+    Note over C,API: [HTTP Method] [Route]
+    C->>+MW: Request + [AuthToken nếu có]
+    MW->>MW: [Middleware actions: Auth check, Rate limit...]
+    MW->>+API: Validated request
+
+    API->>+MED: Send([CommandName/QueryName])
+    
+    Note over MED,V: Pipeline Behaviors
+    MED->>+V: Validate([CommandName])
+    alt Validation fails
+        V-->>MED: ValidationException
+        MED-->>API: Error result
+        API-->>C: 400 Bad Request
+    end
+    V-->>-MED: Valid ✓
+
+    MED->>+H: Handle([CommandName], CancellationToken)
+    
+    Note over H,DB: Business Logic
+    H->>+R: [MethodName]Async(params)
+    R->>+DB: [SQL operation]
+    DB-->>-R: [Result]
+    R-->>-H: [Entity/DTO]
+    
+    H->>H: [Domain logic / entity methods]
+    
+    H->>R: SaveChangesAsync() %%% UnitOfWork
+    R->>DB: COMMIT
+    
+    H-->>-MED: Result<[ReturnType]>
+    MED-->>-API: Result<[ReturnType]>
+    API-->>-MW: [Response DTO]
+    MW-->>-C: [HTTP Status] [Response Body]
+```
+
+**Quy tắc:**
+- `autonumber` luôn bật để dễ reference
+- Dùng `Note over` để đánh dấu các phase quan trọng
+- Dùng `alt/else/end` cho error paths và conditional flows
+- Dùng `loop` cho retry hoặc batch processing
+- Dùng `par` cho parallel operations
+- Ghi tên class/method **chính xác** từ codebase, không dùng placeholder
+
+#### 5.2 Activity Diagram
+
+```mermaid
+flowchart TD
+    Start([🟢 Start: [Trigger]]) --> A
+
+    A[[Receive Request]] --> B{Auth Check}
+    B -->|Unauthorized| ERR1([❌ 401 Unauthorized])
+    B -->|Authorized| C
+
+    C[[Validate Input]] --> D{Valid?}
+    D -->|Invalid| ERR2([❌ 400 Bad Request])
+    D -->|Valid| E
+
+    E[[Load [EntityName]]] --> F{Found?}
+    F -->|Not Found| ERR3([❌ 404 Not Found])
+    F -->|Found| G
+
+    G[[Apply Business Logic]] --> H{[Condition]}
+    H -->|Path A| I1[[...]]
+    H -->|Path B| I2[[...]]
+    
+    I1 --> J
+    I2 --> J
+
+    J[[Persist Changes]] --> K[[Publish Events]]
+    K --> End([🟢 End: [Result]])
+
+    style Start fill:#22c55e,color:#fff
+    style End fill:#22c55e,color:#fff
+    style ERR1 fill:#ef4444,color:#fff
+    style ERR2 fill:#ef4444,color:#fff
+    style ERR3 fill:#ef4444,color:#fff
+```
+
+#### 5.3 ERD
+
+```mermaid
+erDiagram
+    [ENTITY_A] {
+        uuid id PK
+        string [field1]
+        string [field2]
+        datetime created_at
+        datetime updated_at
+    }
+
+    [ENTITY_B] {
+        uuid id PK
+        uuid [entity_a_id] FK
+        string [field1]
+    }
+
+    [ENTITY_A] ||--o{ [ENTITY_B] : "has many"
+    [ENTITY_B] }o--|| [ENTITY_C] : "belongs to"
+```
+
+**Quy tắc:**
+- Chỉ include entities thực sự liên quan đến flow
+- Ghi đúng tên field và type từ codebase (không guess)
+- Đánh dấu PK và FK đầy đủ
+- Relationship labels phải có ý nghĩa domain
+
+#### 5.4 Component Diagram
+
+```mermaid
+graph TB
+    subgraph Presentation["🌐 Presentation Layer"]
+        CTL["[ControllerName]\n[Route]"]
+    end
+
+    subgraph Application["📦 Application Layer"]
+        CMD["[CommandName]\n(Record)"]
+        HDL["[HandlerName]\n(IRequestHandler)"]
+        VAL["[ValidatorName]\n(AbstractValidator)"]
+    end
+
+    subgraph Domain["🏛️ Domain Layer"]
+        ENT["[EntityName]\n(Aggregate Root)"]
+        VO["[ValueObjectName]\n(Value Object)"]
+    end
+
+    subgraph Infrastructure["🔧 Infrastructure Layer"]
+        REPO["[RepositoryName]\n(IRepository)"]
+        SVC["[ServiceName]\n(IExternalService)"]
+        CACHE["[CacheName]\n(ICache)"]
+    end
+
+    subgraph External["☁️ External"]
+        DB[("Database")]
+        MQ["Message Queue\n[topic/queue name]"]
+        API_EXT["External API\n[service name]"]
+    end
+
+    CTL -->|"Send()"| CMD
+    CMD --> HDL
+    VAL --> HDL
+    HDL --> ENT
+    HDL --> REPO
+    HDL --> SVC
+    REPO --> DB
+    SVC --> MQ
+    SVC --> API_EXT
+
+    style Presentation fill:#dbeafe
+    style Application fill:#dcfce7
+    style Domain fill:#fef9c3
+    style Infrastructure fill:#fce7f3
+    style External fill:#f3f4f6
+```
+
+---
+
+### Bước 6 — Sinh File Output
+
+Tạo file tại: `docs/diagrams/[flow-name-kebab-case].md`
+
+```markdown
+# Flow Diagram: [Flow Name]
+
+> Generated: [DATE]
+> Source: `/flow [original input]`
+> Files scanned: [N] files
+> Last updated: [DATE]
+
+---
+
+## Overview
+
+[2-3 câu mô tả flow này làm gì, khi nào triggered, kết quả mong đợi]
+
+**Entry point:** `[HTTP Method] [route]` / `[Event name]` / `[Method signature]`  
+**Actors:** [list các participant]  
+**Key files:**
+- `[file path 1]` — [role trong flow]
+- `[file path 2]` — [role trong flow]
+- `[file path 3]` — [role trong flow]
+
+---
+
+## Sequence Diagram
+
+[Mermaid code]
+
+---
+
+## Activity Diagram  
+[Chỉ có nếu user chọn hoặc All]
+
+[Mermaid code]
+
+---
+
+## ERD
+[Chỉ có nếu user chọn hoặc All và có entity liên quan]
+
+[Mermaid code]
+
+---
+
+## Component Diagram
+[Chỉ có nếu user chọn hoặc All]
+
+[Mermaid code]
+
+---
+
+## Notes
+
+[Các ghi chú quan trọng về flow:]
+- ⚠️ [Potential issue hoặc gotcha được phát hiện khi đọc code]
+- 💡 [Insight về design decision]
+- 🔒 [Security/auth consideration]
+- ⚡ [Performance consideration]
+
+---
+
+## Code References
+
+| Component | File | Method |
+|-----------|------|--------|
+| [ControllerName] | `[exact path]` | `[method name]` |
+| [HandlerName] | `[exact path]` | `Handle()` |
+| [RepositoryName] | `[exact path]` | `[method name]` |
+| ... | ... | ... |
+```
+
+---
+
+### Bước 7 — Xử lý `--update`
+
+Khi nhận lệnh `/flow <tên> --update`:
+
+1. Tìm file `docs/diagrams/[tên].md` đã có
+2. Đọc section `Code References` để xác định files cần re-scan
+3. Scan lại các file đó (và các file mới liên quan nếu có)
+4. So sánh với diagram cũ — highlight những gì đã thay đổi:
+
+```
+🔄 Cập nhật diagram: [flow-name]
+
+Thay đổi phát hiện:
+  ✏️  [HandlerName].Handle() — logic thay đổi tại step 3
+  ➕  [NewServiceName] — được thêm vào call chain
+  ❌  [OldRepositoryMethod] — không còn được dùng
+
+Cập nhật diagrams... ✅
+```
+
+5. Ghi đè file cũ, cập nhật `Last updated` timestamp.
+
+---
+
+### Bước 8 — Thông báo hoàn thành
+
+```
+✅ Diagram đã được sinh tại: docs/diagrams/[flow-name].md
+
+📊 Đã tạo:
+  [✓/–] Sequence Diagram
+  [✓/–] Activity Diagram
+  [✓/–] ERD
+  [✓/–] Component Diagram
+
+🔍 Files đã scan: [N] files
+   [list 5 file quan trọng nhất]
+
+💡 Notes:
+   [Nếu phát hiện issue/gotcha quan trọng khi đọc code, mention ngắn gọn ở đây]
+
+📋 Sử dụng diagram:
+   • Paste Mermaid code vào https://mermaid.live để preview
+   • Import vào TDD: /tdd (diagram sẽ được embed tự động)
+   • Sinh báo cáo HTML: /report docs/diagrams/[flow-name].md
+
+🔁 Cập nhật sau khi code thay đổi:
+   /flow [flow-name] --update
+```
+
+---
+
+## Lưu ý quan trọng
+
+- **Đọc đủ sâu**: Không dừng ở Controller. Phải trace hết call chain đến DB/external service.
+- **Tên chính xác**: Mọi class name, method name, route trong diagram phải khớp 100% với code thực tế.
+- **Không vẽ điều không có**: Nếu không tìm thấy auth middleware, không vẽ auth step.
+- **Error paths**: Luôn thể hiện ít nhất 2-3 error paths quan trọng trong Sequence/Activity diagram.
+- **File naming**: Kebab-case, mô tả domain: `online-order-flow.md`, `jwt-auth-flow.md`, `payment-checkout-flow.md`
+- **Async awareness**: Nếu flow có async/background processing (job, event, queue), thể hiện bằng `par` hoặc note riêng.

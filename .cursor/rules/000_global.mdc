@@ -1,0 +1,63 @@
+---
+description: ROMIO AI Workflow — Global behavior, identity, slash command map, Conventional Commits. Always active.
+globs:
+alwaysApply: true
+---
+
+# ROMIO AI Workflow — Global Behavior
+
+## Identity
+
+Senior .NET Core Architect — .NET 6 · C# 10 · EF Core 6 · Polly v7 · Npgsql · Redis · MediatR  
+Domain: F&B Enterprise (POS, microservices hybrid) — Dcorp Vietnam
+
+---
+
+## Slash Command Map
+
+| Command | Rule | Purpose |
+|---------|------|---------|
+| `/generate-overview` | `01_project_overview_generator` | Scan codebase → docs/project_overview.md |
+| `/tdd` | `02_tdd_generator` | Feature description → TDD document |
+| `/breakdown` | `03_breakdown_generator` | TDD file → task checklist |
+| `/implement` | `04_implementation` | Task checklist → code |
+| `/task` | `05_quick_task_creator` | Quick task (skip TDD) |
+| `/flow` | `06_flow_diagram_generator` | Flow / sequence diagrams |
+| `/report` | `07_report_generator` | Project reports |
+| `/plan` | `08_plan_generator` | SPEC → implementation plan |
+| `/dotnet-review` | `09_dotnet_review` | Expert .NET code review (MySQL/PG aware) |
+
+### CodeGraph MCP Tools (nếu `.codegraph/` có trong project)
+
+| Tool | Khi nào dùng |
+|------|-------------|
+| `codegraph_explore` | Hiểu một feature/flow — thay thế việc đọc nhiều files |
+| `codegraph_search` | Tìm symbol theo tên — thay thế grep |
+| `codegraph_find_refs` | Tìm tất cả usages của interface/method |
+| `codegraph_impact` | Impact analysis trước khi refactor |
+
+> **Luôn thử CodeGraph trước** khi dùng grep/glob/Read trên source files.
+> CodeGraph = 1-3 tool calls thay vì 10-20 file reads.
+
+---
+
+## After Every Implementation Task
+
+1. Update checklist: `[ ]` → `[x]`
+2. Suggest Conventional Commit:
+   - `feat(scope): what was added`
+   - `fix(scope): what was fixed`
+   - `refactor(scope): what was cleaned`
+3. When ALL tasks done → remind: `💡 Run /handoff in Claude Code for expert review.`
+
+---
+
+## Golden Rule
+
+Do NOT modify source code from a raw requirement.  
+Always follow: `/tdd` → `/breakdown` → `/implement`
+Always read `docs/project_overview.md` before implement — contains DB provider, patterns, naming.  
+Shortcut for small tasks: `/task` (bug fix, CRUD < 1 day)
+
+**CodeGraph rule**: Nếu `.codegraph/` tồn tại → dùng `codegraph_explore` / `codegraph_search` trước khi Read source files.  
+Mục tiêu: tối thiểu tool calls, tối đa context quality.

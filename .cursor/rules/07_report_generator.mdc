@@ -1,0 +1,678 @@
+---
+description: Sinh báo cáo kỹ thuật cho feature hoặc sprint. Trigger: /report <feature-name>
+globs:
+alwaysApply: false
+---
+
+# Rule: Report Generator
+
+## Trigger
+
+Kích hoạt rule này khi người dùng gõ một trong các lệnh sau vào chat:
+
+```
+/report <file1.md> <file2.md> ...
+/report <folder/>
+/report docs/diagrams/
+/report docs/tdd/tdd_feature.md docs/diagrams/feature-flow.md docs/tasks/tasks_feature.md
+```
+
+Ví dụ:
+```
+/report docs/diagrams/online-order-flow.md
+/report docs/tdd/tdd_online-order.md docs/diagrams/online-order-flow.md docs/tasks/tasks_online-order.md
+/report docs/diagrams/
+/report docs/tdd/ docs/diagrams/
+```
+
+---
+
+## Mục tiêu
+
+Nhận một hoặc nhiều file `.md` (chủ yếu output từ `/flow`, cùng với TDD và Tasks nếu có),
+tổng hợp thành **một file HTML duy nhất** có thể:
+- Mở trực tiếp trong browser — không cần web server
+- Render Mermaid diagrams tự động
+- Hỗ trợ dark/light mode toggle
+- Collapsible sections
+- Print-friendly / Export PDF via browser
+- Sidebar navigation cho file nhiều sections
+
+---
+
+## Workflow
+
+### Bước 1 — Hỏi Input Files
+
+**Nếu không có argument nào được cung cấp**, hỏi:
+
+```
+📄 Bạn muốn tổng hợp file nào vào báo cáo?
+
+Gợi ý — các file diagram hiện có trong docs/diagrams/:
+  [list các file .md trong thư mục đó nếu tồn tại]
+
+Gợi ý — các file TDD hiện có trong docs/tdd/:
+  [list các file .md trong thư mục đó nếu tồn tại]
+
+Bạn có thể:
+  • Cung cấp paths cụ thể: /report docs/diagrams/flow-a.md docs/tdd/tdd-b.md
+  • Cung cấp folder: /report docs/diagrams/
+  • Hoặc liệt kê file names ngay tại đây
+```
+
+**Nếu có argument**, tiến hành ngay — không hỏi lại.
+
+---
+
+### Bước 2 — Resolve Input Files
+
+**Trường hợp A — File path cụ thể:**
+Đọc từng file theo path. Nếu file không tồn tại, bỏ qua và cảnh báo:
+```
+⚠️ Không tìm thấy: [path] — bỏ qua file này.
+```
+
+**Trường hợp B — Folder path (kết thúc bằng `/`):**
+Scan tất cả file `.md` trong folder đó (không đệ quy). Sort theo tên file.
+
+**Trường hợp C — Nhiều folders:**
+Gộp tất cả file `.md` từ các folder, deduplicate, sort theo: tdd → diagrams → tasks → others.
+
+---
+
+### Bước 3 — Phân tích và Phân loại Files
+
+Với mỗi file `.md` đọc được, xác định loại:
+
+| Loại file | Dấu hiệu | Icon | Màu accent |
+|-----------|----------|------|-----------|
+| Flow Diagram | Tên bắt đầu `flow_` hoặc `*-flow.md` hoặc có `# Flow Diagram:` | 🔀 | Blue |
+| TDD | Tên bắt đầu `tdd_` hoặc có `# Technical Design Document:` | 📐 | Purple |
+| Task Breakdown | Tên bắt đầu `tasks_` hoặc có `# Task Breakdown:` hoặc `# Tasks:` | ✅ | Green |
+| Project Overview | `project_overview.md` | 🏗️ | Orange |
+| Other | Không match pattern nào | 📄 | Gray |
+
+Trích xuất từ mỗi file:
+- **Title**: dòng `# heading` đầu tiên
+- **Metadata**: các dòng `> Key: Value` ở đầu file
+- **Sections**: tất cả `## heading` và nội dung tương ứng
+- **Mermaid blocks**: tất cả code block ` ```mermaid ... ``` `
+- **Tables**: tất cả Markdown tables
+- **Checklists**: tất cả `- [ ]` / `- [x]` items → convert sang progress tracker
+
+---
+
+### Bước 4 — Xác định Report Title
+
+- Nếu tất cả files cùng feature → title: `[Feature Name] — Technical Report`
+- Nếu files từ nhiều features → title: `Sprint Report — [DATE]`
+- Nếu chỉ diagram files → title: `Architecture Diagrams — [DATE]`
+
+---
+
+### Bước 5 — Sinh File HTML
+
+Tạo file tại: `docs/reports/report_[title-kebab]_[YYYYMMDD].html`
+
+Sử dụng template HTML tự-contained hoàn chỉnh dưới đây:
+
+```html
+<!DOCTYPE html>
+<html lang="vi" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>[REPORT_TITLE]</title>
+  
+  <!-- Mermaid -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  
+  <!-- Highlight.js for code blocks -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" id="hljs-theme">
+
+  <style>
+    /* ─── CSS Variables ─────────────────────────────────── */
+    :root {
+      --bg-page:       #f8fafc;
+      --bg-card:       #ffffff;
+      --bg-sidebar:    #1e293b;
+      --bg-code:       #f1f5f9;
+      --text-primary:  #0f172a;
+      --text-secondary:#475569;
+      --text-sidebar:  #cbd5e1;
+      --text-sidebar-active: #ffffff;
+      --border:        #e2e8f0;
+      --accent-blue:   #3b82f6;
+      --accent-purple: #8b5cf6;
+      --accent-green:  #22c55e;
+      --accent-orange: #f97316;
+      --accent-gray:   #94a3b8;
+      --sidebar-w:     260px;
+      --header-h:      56px;
+    }
+
+    [data-theme="dark"] {
+      --bg-page:       #0f172a;
+      --bg-card:       #1e293b;
+      --bg-sidebar:    #0a0f1e;
+      --bg-code:       #0f172a;
+      --text-primary:  #f1f5f9;
+      --text-secondary:#94a3b8;
+      --text-sidebar:  #94a3b8;
+      --border:        #334155;
+    }
+
+    /* ─── Reset & Base ──────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg-page);
+      color: var(--text-primary);
+      line-height: 1.6;
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+
+    /* ─── Header ────────────────────────────────────────── */
+    header {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+      height: var(--header-h);
+      background: var(--bg-card);
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center;
+      padding: 0 1.5rem;
+      gap: 1rem;
+    }
+
+    .header-title {
+      font-weight: 600; font-size: 1rem;
+      flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+
+    .header-meta {
+      font-size: 0.75rem; color: var(--text-secondary);
+    }
+
+    .btn {
+      display: inline-flex; align-items: center; gap: 0.4rem;
+      padding: 0.35rem 0.8rem; border-radius: 6px; border: 1px solid var(--border);
+      background: var(--bg-card); color: var(--text-primary);
+      font-size: 0.8rem; cursor: pointer; transition: all 0.15s;
+      white-space: nowrap;
+    }
+    .btn:hover { background: var(--border); }
+    .btn-primary { background: var(--accent-blue); color: #fff; border-color: transparent; }
+    .btn-primary:hover { opacity: 0.9; }
+
+    /* ─── Layout ────────────────────────────────────────── */
+    .layout {
+      display: flex;
+      margin-top: var(--header-h);
+      min-height: calc(100vh - var(--header-h));
+    }
+
+    /* ─── Sidebar ───────────────────────────────────────── */
+    .sidebar {
+      position: fixed;
+      top: var(--header-h); left: 0;
+      width: var(--sidebar-w);
+      height: calc(100vh - var(--header-h));
+      background: var(--bg-sidebar);
+      overflow-y: auto; overflow-x: hidden;
+      padding: 1rem 0;
+      transition: transform 0.25s;
+    }
+
+    .sidebar-section-label {
+      padding: 0.75rem 1.25rem 0.35rem;
+      font-size: 0.65rem; font-weight: 700; letter-spacing: 0.08em;
+      text-transform: uppercase; color: #475569;
+    }
+
+    .sidebar-item {
+      display: flex; align-items: center; gap: 0.6rem;
+      padding: 0.5rem 1.25rem;
+      color: var(--text-sidebar);
+      font-size: 0.82rem; cursor: pointer;
+      text-decoration: none;
+      transition: background 0.12s, color 0.12s;
+      border-left: 3px solid transparent;
+    }
+    .sidebar-item:hover,
+    .sidebar-item.active {
+      background: rgba(255,255,255,0.06);
+      color: var(--text-sidebar-active);
+      border-left-color: var(--accent-blue);
+    }
+
+    .sidebar-item .item-icon { font-size: 0.9rem; flex-shrink: 0; }
+    .sidebar-item .item-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .sidebar-sub {
+      padding-left: 2.5rem; font-size: 0.78rem; color: #64748b;
+    }
+    .sidebar-sub:hover { color: var(--text-sidebar-active); }
+
+    /* ─── Main Content ──────────────────────────────────── */
+    .main {
+      margin-left: var(--sidebar-w);
+      flex: 1; padding: 2rem 2.5rem;
+      max-width: 1100px;
+    }
+
+    /* ─── File Card ─────────────────────────────────────── */
+    .file-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      margin-bottom: 2rem;
+      overflow: hidden;
+    }
+
+    .file-card-header {
+      display: flex; align-items: center; gap: 0.75rem;
+      padding: 1rem 1.5rem;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-page);
+    }
+
+    .file-badge {
+      display: inline-flex; align-items: center; gap: 0.35rem;
+      padding: 0.2rem 0.65rem; border-radius: 999px;
+      font-size: 0.72rem; font-weight: 600;
+    }
+
+    .badge-flow   { background: #dbeafe; color: #1d4ed8; }
+    .badge-tdd    { background: #ede9fe; color: #6d28d9; }
+    .badge-task   { background: #dcfce7; color: #15803d; }
+    .badge-overview { background: #ffedd5; color: #c2410c; }
+    .badge-other  { background: #f1f5f9; color: #475569; }
+
+    [data-theme="dark"] .badge-flow    { background: #1e3a5f; color: #93c5fd; }
+    [data-theme="dark"] .badge-tdd     { background: #2e1065; color: #c4b5fd; }
+    [data-theme="dark"] .badge-task    { background: #052e16; color: #86efac; }
+    [data-theme="dark"] .badge-overview{ background: #431407; color: #fdba74; }
+
+    .file-card-title {
+      font-size: 1.05rem; font-weight: 600; flex: 1;
+    }
+
+    .collapse-btn {
+      background: none; border: none; cursor: pointer;
+      color: var(--text-secondary); font-size: 1.1rem;
+      padding: 0.25rem; border-radius: 4px;
+      transition: transform 0.2s;
+    }
+    .collapse-btn.collapsed { transform: rotate(-90deg); }
+
+    .file-card-meta {
+      display: flex; flex-wrap: wrap; gap: 1rem;
+      padding: 0.75rem 1.5rem;
+      background: var(--bg-page);
+      border-bottom: 1px solid var(--border);
+      font-size: 0.78rem; color: var(--text-secondary);
+    }
+
+    .file-card-body { padding: 1.5rem; }
+    .file-card-body.collapsed { display: none; }
+
+    /* ─── Progress Bar (for Tasks) ──────────────────────── */
+    .progress-wrap {
+      margin-bottom: 1.5rem;
+    }
+    .progress-header {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 0.4rem; font-size: 0.82rem; color: var(--text-secondary);
+    }
+    .progress-bar {
+      height: 8px; border-radius: 999px; background: var(--border);
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%; border-radius: 999px; background: var(--accent-green);
+      transition: width 0.3s;
+    }
+
+    /* ─── Section within card ───────────────────────────── */
+    .doc-section { margin-bottom: 2rem; }
+    .doc-section:last-child { margin-bottom: 0; }
+
+    .section-header {
+      display: flex; align-items: center; gap: 0.5rem;
+      padding: 0.5rem 0;
+      border-bottom: 2px solid var(--border);
+      margin-bottom: 1rem;
+      cursor: pointer;
+    }
+
+    .section-header h2, .section-header h3 {
+      font-size: 0.95rem; font-weight: 600;
+      flex: 1;
+    }
+
+    /* ─── Mermaid Diagrams ──────────────────────────────── */
+    .mermaid-wrap {
+      margin: 1rem 0;
+      background: var(--bg-code);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.5rem;
+      overflow-x: auto;
+    }
+
+    .mermaid { text-align: center; }
+
+    /* ─── Markdown Content ──────────────────────────────── */
+    .doc-content h1 { font-size: 1.5rem; margin-bottom: 1rem; }
+    .doc-content h2 { font-size: 1.15rem; margin: 1.5rem 0 0.75rem; }
+    .doc-content h3 { font-size: 1rem; margin: 1.25rem 0 0.5rem; }
+    .doc-content h4 { font-size: 0.9rem; margin: 1rem 0 0.4rem; color: var(--text-secondary); }
+
+    .doc-content p { margin-bottom: 0.75rem; }
+
+    .doc-content ul, .doc-content ol {
+      padding-left: 1.5rem; margin-bottom: 0.75rem;
+    }
+    .doc-content li { margin-bottom: 0.3rem; }
+
+    /* Checklist */
+    .doc-content li.task-done { color: var(--text-secondary); text-decoration: line-through; }
+    .doc-content li.task-todo { }
+    .checklist-icon { margin-right: 0.4rem; }
+
+    /* Tables */
+    .doc-content table {
+      width: 100%; border-collapse: collapse; margin: 1rem 0;
+      font-size: 0.85rem;
+    }
+    .doc-content th {
+      background: var(--bg-code);
+      padding: 0.6rem 1rem; text-align: left;
+      border: 1px solid var(--border);
+      font-weight: 600;
+    }
+    .doc-content td {
+      padding: 0.5rem 1rem; border: 1px solid var(--border);
+    }
+    .doc-content tr:nth-child(even) td { background: var(--bg-page); }
+
+    /* Code */
+    .doc-content code {
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      font-size: 0.83em;
+      background: var(--bg-code); padding: 0.15em 0.4em; border-radius: 4px;
+    }
+    .doc-content pre {
+      background: var(--bg-code); padding: 1rem; border-radius: 8px;
+      overflow-x: auto; margin: 0.75rem 0;
+      border: 1px solid var(--border);
+    }
+    .doc-content pre code { background: none; padding: 0; }
+
+    /* Blockquote (metadata lines) */
+    .doc-content blockquote {
+      border-left: 3px solid var(--accent-blue);
+      padding: 0.5rem 1rem;
+      color: var(--text-secondary);
+      font-size: 0.85rem; margin: 0.75rem 0;
+      background: var(--bg-code); border-radius: 0 6px 6px 0;
+    }
+
+    /* ─── Print ─────────────────────────────────────────── */
+    @media print {
+      .sidebar, header .btn { display: none; }
+      .main { margin-left: 0; }
+      .file-card-body.collapsed { display: block !important; }
+    }
+
+    /* ─── Responsive ────────────────────────────────────── */
+    @media (max-width: 768px) {
+      .sidebar { transform: translateX(-100%); }
+      .sidebar.open { transform: translateX(0); }
+      .main { margin-left: 0; padding: 1rem; }
+    }
+  </style>
+</head>
+
+<body>
+  <!-- ── Header ──────────────────────────────────────── -->
+  <header>
+    <button class="btn" id="sidebar-toggle" title="Toggle sidebar">☰</button>
+    <span class="header-title">[REPORT_TITLE]</span>
+    <span class="header-meta">Generated [DATE] · [N] files</span>
+    <button class="btn" id="theme-toggle" title="Toggle dark/light">🌙</button>
+    <button class="btn btn-primary" onclick="window.print()">🖨️ Print / PDF</button>
+  </header>
+
+  <!-- ── Layout ──────────────────────────────────────── -->
+  <div class="layout">
+    <!-- Sidebar -->
+    <nav class="sidebar" id="sidebar">
+      <!-- [SINH ĐỘNG] Mỗi file là một section label, mỗi ## heading là một sidebar-sub -->
+      <!--
+      <span class="sidebar-section-label">[FILE_TYPE]</span>
+      <a class="sidebar-item" href="#[anchor]">
+        <span class="item-icon">[ICON]</span>
+        <span class="item-text">[FILE_TITLE]</span>
+      </a>
+      <a class="sidebar-item sidebar-sub" href="#[section-anchor]">[Section Name]</a>
+      -->
+    </nav>
+
+    <!-- Main -->
+    <main class="main" id="main-content">
+      <!-- [SINH ĐỘNG] Mỗi file .md là một .file-card -->
+      <!--
+      <div class="file-card" id="[file-anchor]">
+        <div class="file-card-header">
+          <span class="file-badge badge-[type]">[ICON] [TYPE]</span>
+          <span class="file-card-title">[FILE_TITLE]</span>
+          <button class="collapse-btn" onclick="toggleCard(this)">▾</button>
+        </div>
+        <div class="file-card-meta">
+          <span>📅 [Date metadata]</span>
+          <span>📁 [Source file path]</span>
+          <span>🔗 [Other metadata]</span>
+        </div>
+        <div class="file-card-body">
+          [RENDERED CONTENT]
+        </div>
+      </div>
+      -->
+    </main>
+  </div>
+
+  <script>
+    // ── Mermaid Init ─────────────────────────────────────
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: document.documentElement.dataset.theme === 'dark' ? 'dark' : 'default',
+      securityLevel: 'loose',
+      flowchart: { useMaxWidth: true, htmlLabels: true },
+      sequence: { useMaxWidth: true },
+    });
+
+    // ── Theme Toggle ─────────────────────────────────────
+    const themeBtn = document.getElementById('theme-toggle');
+    const hljsTheme = document.getElementById('hljs-theme');
+
+    function setTheme(theme) {
+      document.documentElement.dataset.theme = theme;
+      themeBtn.textContent = theme === 'dark' ? '☀️' : '🌙';
+      hljsTheme.href = theme === 'dark'
+        ? 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css'
+        : 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css';
+      // Re-render mermaid with correct theme
+      mermaid.initialize({
+        startOnLoad: false,
+        theme: theme === 'dark' ? 'dark' : 'default',
+        securityLevel: 'loose',
+      });
+      document.querySelectorAll('.mermaid[data-source]').forEach(el => {
+        el.removeAttribute('data-processed');
+        el.innerHTML = el.dataset.source;
+      });
+      mermaid.run();
+      localStorage.setItem('report-theme', theme);
+    }
+
+    themeBtn.addEventListener('click', () => {
+      setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
+    });
+
+    // Restore saved theme
+    const savedTheme = localStorage.getItem('report-theme');
+    if (savedTheme) setTheme(savedTheme);
+
+    // ── Sidebar Toggle ───────────────────────────────────
+    document.getElementById('sidebar-toggle').addEventListener('click', () => {
+      document.getElementById('sidebar').classList.toggle('open');
+    });
+
+    // ── Collapse Cards ───────────────────────────────────
+    function toggleCard(btn) {
+      const body = btn.closest('.file-card').querySelector('.file-card-body');
+      body.classList.toggle('collapsed');
+      btn.classList.toggle('collapsed');
+    }
+
+    // ── Collapse Sections ────────────────────────────────
+    function toggleSection(header) {
+      const content = header.nextElementSibling;
+      if (content) content.classList.toggle('hidden');
+      const icon = header.querySelector('.collapse-icon');
+      if (icon) icon.textContent = content?.classList.contains('hidden') ? '▸' : '▾';
+    }
+
+    // ── Active Sidebar on Scroll ─────────────────────────
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) {
+          document.querySelectorAll('.sidebar-item').forEach(item => {
+            item.classList.remove('active');
+            if (item.getAttribute('href') === '#' + entry.target.id) {
+              item.classList.add('active');
+            }
+          });
+        }
+      });
+    }, { threshold: 0.2 });
+
+    document.querySelectorAll('.file-card[id]').forEach(card => observer.observe(card));
+
+    // ── Syntax Highlight ─────────────────────────────────
+    document.addEventListener('DOMContentLoaded', () => {
+      document.querySelectorAll('pre code:not(.language-mermaid)').forEach(el => {
+        hljs.highlightElement(el);
+      });
+    });
+
+    // ── Store mermaid source for re-render ───────────────
+    document.querySelectorAll('.mermaid').forEach(el => {
+      el.dataset.source = el.textContent;
+    });
+  </script>
+</body>
+</html>
+```
+
+---
+
+### Bước 6 — Quy tắc Render Markdown → HTML
+
+Khi convert nội dung Markdown sang HTML cho từng section, áp dụng:
+
+**Checklist items:**
+```
+- [ ] Task APP-01: ...  →  <li class="task-todo"><span class="checklist-icon">⬜</span> Task APP-01: ...</li>
+- [x] Task DB-01: ...  →  <li class="task-done"><span class="checklist-icon">✅</span> Task DB-01: ...</li>
+```
+
+**Progress counter** (từ dòng `> Progress: X / Y tasks`):
+```html
+<div class="progress-wrap">
+  <div class="progress-header">
+    <span>Tasks Progress</span>
+    <span><strong>X</strong> / Y completed</span>
+  </div>
+  <div class="progress-bar">
+    <div class="progress-fill" style="width: [X/Y*100]%"></div>
+  </div>
+</div>
+```
+
+**Mermaid blocks:**
+```html
+<div class="mermaid-wrap">
+  <div class="mermaid" data-source="[mermaid code]">
+[mermaid code]
+  </div>
+</div>
+```
+
+**Code blocks (non-mermaid):**
+```html
+<pre><code class="language-[lang]">[escaped code]</code></pre>
+```
+
+**Metadata lines** (`> Key: Value`):
+```html
+<blockquote>[Key]: [Value]</blockquote>
+```
+
+**Tables:** Convert trực tiếp sang `<table>` HTML chuẩn với class `.doc-content`.
+
+**Sections** (`##` headings): Bọc mỗi `##` section vào `.doc-section` với collapsible behavior:
+```html
+<div class="doc-section" id="[slug]">
+  <div class="section-header" onclick="toggleSection(this)">
+    <h2>[Section Name]</h2>
+    <span class="collapse-icon">▾</span>
+  </div>
+  <div class="section-content">
+    [content]
+  </div>
+</div>
+```
+
+---
+
+### Bước 7 — Thông báo hoàn thành
+
+```
+✅ Báo cáo đã được sinh tại: docs/reports/report_[title]_[DATE].html
+
+📊 Tổng hợp:
+  [icon] [N] Flow Diagram files
+  [icon] [N] TDD files
+  [icon] [N] Task Breakdown files
+
+📋 Nội dung:
+  • [N] Mermaid diagrams (auto-render khi mở browser)
+  • [N] Tasks với progress tracking
+  • Sidebar navigation với [N] sections
+  • Dark/light toggle + Print/PDF export
+
+🌐 Cách xem:
+  Mở file trực tiếp trong browser (File → Open hoặc double-click)
+  Không cần web server.
+  
+🖨️ Xuất PDF:
+  Trong browser → Print → Save as PDF
+  (Sidebar và controls được ẩn tự động khi in)
+```
+
+---
+
+## Lưu ý quan trọng
+
+- **Self-contained HTML**: File HTML phải tự hoạt động khi mở offline — tất cả CSS/JS nằm inline, ngoại trừ CDN scripts (Mermaid, Highlight.js) cần internet lần đầu.
+- **Không alter nội dung**: Chỉ convert format, không thêm/bớt nội dung từ file `.md` gốc.
+- **Mermaid accuracy**: Copy nguyên code Mermaid từ file `.md` vào HTML, không sửa đổi — để Mermaid engine tự render.
+- **File naming**: `report_[feature-or-scope]_[YYYYMMDD].html` — ví dụ `report_online-order_20240115.html`, `report_sprint-3_20240120.html`
+- **Anchor IDs**: Generate từ title của file/section, kebab-case, để sidebar navigation hoạt động đúng.
+- **Escape HTML entities**: Trong code blocks và Mermaid blocks, escape `<`, `>`, `&` thành entities trước khi đặt vào HTML.

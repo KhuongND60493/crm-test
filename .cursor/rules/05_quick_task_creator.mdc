@@ -1,0 +1,301 @@
+---
+description: Tạo task nhanh không qua TDD (bug fix, CRUD đơn giản). Trigger: /task <description> hoặc /newtask
+globs:
+alwaysApply: false
+---
+
+# Rule: Quick Task Creator
+
+## Trigger
+
+Kích hoạt rule này khi người dùng gõ một trong các lệnh sau vào chat:
+
+```
+/task <mô tả>
+/newtask <mô tả>
+task: <mô tả>
+```
+
+Ví dụ:
+```
+/task thêm API export config ra file Excel
+/task fix bug login không redirect đúng sau khi xác thực
+/newtask màn hình quản lý user cần thêm filter theo role
+task: gửi email notification khi deployment thất bại
+```
+
+---
+
+## Mục tiêu
+
+Rule này là **shortcut gộp** của `02_tdd_generator` + `03_breakdown_generator`.
+
+Người dùng chỉ cần mô tả feature/bug/task bằng ngôn ngữ tự nhiên từ chat.
+Rule sẽ tự phân tích, hỏi thêm nếu chưa đủ thông tin, rồi **sinh thẳng ra file tasks**
+mà không cần đi qua bước TDD riêng lẻ.
+
+```
+[Chat Input]
+     ↓
+[Phân tích + Clarify nếu cần]
+     ↓
+[Sinh docs/tasks/tasks_<feature>.md]
+     ↓
+[Sẵn sàng cho /implement]
+```
+
+---
+
+## Workflow
+
+### Bước 1 — Đọc Knowledge Base (BẮT BUỘC)
+
+Đọc theo thứ tự:
+
+1. **`docs/KB_INDEX.md`** — xem có tài liệu domain liên quan không
+2. **`docs/project_overview.md`** — ĐỌC TOÀN BỘ:
+   - Tech stack, patterns đang dùng
+   - Tên thực tế của entities, repositories, services
+   - Folder conventions — đặt file đúng chỗ
+   - Naming conventions — đặt tên đúng chuẩn
+   - .NET 6 constraints
+
+Nếu `docs/project_overview.md` không tồn tại:
+```
+⚠️ Chưa có docs/project_overview.md.
+Chạy /generate-overview để tạo trước, hoặc tôi sẽ tạo task với
+placeholder names (cần review lại trước khi implement).
+Tiếp tục? (yes / no)
+```
+
+Ghi nhận để dùng trong task file:
+- Namespace pattern của project
+- Tên DbContext, base Repository interface
+- Folder path chính xác cho từng loại file
+
+---
+
+### Bước 2 — Phân tích Request
+
+Từ input của người dùng, xác định:
+
+| Dimension | Câu hỏi cần trả lời |
+|-----------|-------------------|
+| **Type** | Đây là Feature mới / Bug fix / Refactor / Config change? |
+| **Scope** | Ảnh hưởng đến layer nào? Domain / App / Infra / UI? |
+| **Complexity** | Cần migration? External service? Multi-step flow? |
+| **Clarity** | Mô tả có đủ để tạo tasks cụ thể không? |
+
+---
+
+### Bước 3 — Hỏi Clarify (chỉ khi thực sự cần)
+
+**Nguyên tắc hỏi:**
+- Chỉ hỏi khi thiếu thông tin **không thể tự suy ra** từ codebase hoặc context
+- Gom tất cả vào **1 lần hỏi duy nhất**, tối đa 4 câu
+- Mỗi câu hỏi phải là **câu hỏi đóng** (có options cụ thể) hoặc câu hỏi rất ngắn
+- Nếu có thể tự assumptions → ghi rõ assumption và tiến hành luôn
+
+**Template hỏi:**
+
+```
+Tôi cần làm rõ nhanh trước khi tạo tasks:
+
+❓ [Câu hỏi 1 — thường về scope/behavior]
+   → A) [Option A]  B) [Option B]  C) [Option C]
+
+❓ [Câu hỏi 2 — nếu có, thường về technical approach]
+   → A) [Option A]  B) [Option B]
+
+❓ [Câu hỏi 3 — nếu có, thường về edge case quan trọng]
+
+💡 Hoặc gõ "just do it" để tôi tự assumptions và tạo tasks luôn.
+```
+
+**Các trường hợp KHÔNG cần hỏi:**
+- Bug fix rõ ràng với reproduction steps → tạo tasks luôn
+- CRUD đơn giản cho entity đã có pattern tương tự trong project → tạo tasks luôn
+- Request chỉ thêm 1 field/property → tạo tasks luôn
+- Người dùng đã cung cấp đủ: what + where + expected behavior → tạo tasks luôn
+
+---
+
+### Bước 4 — Tạo Internal Design Summary
+
+Không cần sinh file TDD riêng. Thay vào đó, tự tổng hợp nội bộ:
+
+```
+[Internal Analysis — không hiển thị ra chat]
+Feature: [tên]
+Type: [Feature/Bug/Refactor]
+Affected layers: [list]
+New files needed: [list với paths]
+Files to modify: [list với paths]  
+DB migration needed: [Yes/No — lý do]
+Assumptions made: [list]
+```
+
+Nếu có assumptions quan trọng, **hiển thị ngắn gọn** cho người dùng biết trước khi tạo tasks.
+
+---
+
+### Bước 5 — Sinh File Tasks
+
+Tạo file tại: `docs/tasks/tasks_[feature-name-kebab-case].md`
+
+**Naming convention:**
+- Feature mới: `tasks_add-export-excel.md`
+- Bug fix: `tasks_fix-login-redirect.md`
+- Refactor: `tasks_refactor-user-service.md`
+
+```markdown
+# Tasks: [Feature/Fix Name]
+
+> Request: "[original chat input]"
+> Type: [Feature | Bug Fix | Refactor | Chore]
+> Created: [DATE]
+> Status: In Progress
+> Assumptions: [list assumptions nếu có, hoặc "None"]
+>
+> Progress: 0 / [total] tasks completed
+
+---
+
+[Chỉ bao gồm các section thực sự có tasks. Bỏ qua section không liên quan.]
+
+## 🗄️ Database
+[Chỉ có nếu cần migration hoặc schema change]
+
+- [ ] Task DB-01: Tạo migration `[MigrationName]`
+  - Thay đổi: [mô tả ngắn gọn]
+  - File: `[ProjectName].Infrastructure/Migrations/`
+  - Command: `dotnet ef migrations add [MigrationName]`
+
+---
+
+## 🏛️ Domain
+[Chỉ có nếu thêm/sửa entity, value object, domain logic]
+
+- [ ] Task DM-01: [Create/Modify] `[EntityName]`
+  - File: `[exact file path]`
+  - Changes:
+    - [ ] [change 1]
+    - [ ] [change 2]
+
+---
+
+## 📦 Application
+[Commands, Queries, Handlers, Validators]
+
+- [ ] Task APP-01: Tạo `[CommandName]` record
+  - File: `[exact file path]`
+  - Properties: [list]
+
+- [ ] Task APP-02: Implement `[CommandName]Handler`
+  - File: `[exact file path]`
+  - Inject: [list dependencies]
+  - Logic:
+    - [ ] [step 1]
+    - [ ] [step 2]
+    - [ ] [step 3]
+    - [ ] Return `Result<[Type]>`
+
+- [ ] Task APP-03: Tạo `[CommandName]Validator`
+  - File: `[exact file path]`
+  - Rules:
+    - [ ] [rule 1]
+    - [ ] [rule 2]
+
+---
+
+## 🔧 Infrastructure
+[Chỉ có nếu cần thêm repository method, external service, DI registration]
+
+- [ ] Task INF-01: Thêm method `[MethodName]Async()` vào `[RepositoryName]`
+  - File: `[exact file path]`
+  - Query logic: [mô tả]
+
+---
+
+## 🌐 API / UI
+[Chỉ có nếu cần thêm endpoint hoặc UI component]
+
+- [ ] Task API-01: Thêm action `[ActionName]` vào `[ControllerName]`
+  - File: `[exact file path]`
+  - Route: `[METHOD] [/api/path]`
+  - Request: `[CommandName]`
+  - Response: `Result<[Type]>`
+
+---
+
+## 🧪 Testing
+
+- [ ] Task TEST-01: Unit test cho `[HandlerName]`
+  - File: `[exact file path]`
+  - Cases:
+    - [ ] Happy path: [mô tả]
+    - [ ] [Edge case 1]: [mô tả]
+    - [ ] [Edge case 2]: [mô tả]
+
+---
+
+[Nếu là Bug Fix, thêm section này:]
+## 🐛 Bug Context
+> Root cause: [phân tích nguyên nhân]
+> Repro: [steps to reproduce nếu biết]
+> Fix approach: [hướng fix]
+```
+
+---
+
+### Bước 6 — Thông báo hoàn thành
+
+```
+✅ Đã tạo task file: docs/tasks/tasks_[feature-name].md
+
+📋 Tóm tắt ([Type]):
+   [Một câu mô tả feature/fix]
+
+📊 Tasks được tạo:
+   🗄️  DB:          [N] tasks  (hoặc "–" nếu không có)
+   🏛️  Domain:      [N] tasks
+   📦  Application: [N] tasks
+   🔧  Infra:       [N] tasks
+   🌐  API/UI:      [N] tasks
+   🧪  Testing:     [N] tasks
+   ──────────────────────────
+   Total:           [N] tasks
+
+[Nếu có assumptions:]
+⚠️  Assumptions đã được áp dụng:
+   • [assumption 1]
+   • [assumption 2]
+   Nếu sai, hãy cho tôi biết để điều chỉnh trước khi implement.
+
+🚀 Sẵn sàng implement. Gõ:
+   /implement docs/tasks/tasks_[feature-name].md
+```
+
+---
+
+## Bảng quyết định: Có hỏi hay không?
+
+| Tình huống | Hành động |
+|-----------|-----------|
+| "Fix bug X ở màn hình Y, nó đang làm A thay vì B" | Tạo tasks luôn |
+| "Thêm field email vào User entity" | Tạo tasks luôn |
+| "CRUD cho entity mới giống entity đã có" | Tạo tasks luôn, note assumption về pattern |
+| "Thêm tính năng notification" (không rõ channel: email/push/SMS?) | Hỏi 1 câu về channel |
+| "Cải thiện performance của trang X" | Hỏi: bottleneck cụ thể là gì? |
+| "Refactor service Y" | Hỏi: mục tiêu refactor là gì (testability/performance/structure)? |
+| Người dùng gõ "just do it" | Tự assumptions 100%, ghi rõ vào file |
+
+---
+
+## Lưu ý quan trọng
+
+- **File path phải chính xác**: Mọi task đều phải có `exact file path` thực tế từ codebase, không dùng `<your-project>/...` hay placeholder.
+- **Bỏ section trống**: Nếu feature không có DB changes, bỏ hẳn section Database ra khỏi file — đừng để section rỗng gây confuse.
+- **Bug fix có context riêng**: Với bug fix, luôn thêm section `🐛 Bug Context` phân tích root cause trước khi list tasks.
+- **Không generate TDD file**: Rule này **không** tạo file TDD riêng. Nếu feature đủ lớn và cần TDD đầy đủ, gợi ý người dùng dùng `/tdd` thay thế.
+- **Tương thích với `/implement`**: File output phải đúng format để rule `04_implementation.md` có thể đọc và execute được ngay.

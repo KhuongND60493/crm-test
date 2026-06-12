@@ -1,0 +1,303 @@
+---
+description: Sinh Technical Design Document từ feature description. Trigger: /tdd <feature> hoặc /design <feature>
+globs:
+alwaysApply: false
+---
+
+# Rule: Technical Design Document (TDD) Generator
+
+## Trigger
+
+Kích hoạt rule này khi người dùng gõ một trong các lệnh sau vào chat:
+
+```
+/tdd <mô tả feature>
+/design <mô tả feature>
+generate TDD for: <mô tả feature>
+```
+
+Ví dụ:
+```
+/tdd Add user authentication with JWT
+/design Export configuration to Excel
+generate TDD for: Notification system when deployment fails
+```
+
+---
+
+## Mục tiêu
+
+Nhận feature request **trực tiếp từ chat** (không cần file đính kèm), tự động:
+1. Đọc `docs/project_overview.md` để hiểu context project
+2. Hỏi clarifying questions nếu cần
+3. Sinh ra Technical Design Document chuẩn hóa
+4. Lưu file TDD và thông báo để chuyển sang bước Breakdown
+
+---
+
+## Workflow
+
+### Bước 1 — Đọc Knowledge Base
+
+Đọc theo thứ tự — **bắt buộc trước khi làm bất cứ điều gì**:
+
+1. **`docs/KB_INDEX.md`** — xem có tài liệu nào liên quan không
+2. **`docs/project_overview.md`** — architecture, entity names, patterns, conventions
+
+Nếu `docs/project_overview.md` không tồn tại:
+```
+⚠️ Chưa có docs/project_overview.md.
+Chạy /generate-overview trong Cursor để tạo file này trước.
+Tôi có thể tiếp tục với thông tin hạn chế, nhưng TDD sẽ không dùng đúng
+tên entity, pattern, và convention của project.
+Tiếp tục? (yes / no)
+```
+
+Khi đọc `docs/project_overview.md`, ghi nhận:
+- Tên thực tế của các entity, command, query, repository trong project
+- Architecture pattern đang dùng (dùng lại pattern này trong TDD)
+- Naming convention (file paths, class names)
+- .NET 6 constraints
+
+---
+
+### Bước 2 — Parse Feature Request từ Chat
+
+Từ input của người dùng, trích xuất:
+- **Feature Name**: tên ngắn gọn của feature
+- **Description**: mô tả người dùng đã cung cấp
+- **Implicit Requirements**: những gì có thể suy ra từ context project
+
+---
+
+### Bước 3 — Clarifying Questions (nếu cần)
+
+Chỉ hỏi nếu feature request còn mơ hồ trên các điểm **thực sự quan trọng** để thiết kế.
+Gom tối đa **3 câu hỏi** vào một lần hỏi, không hỏi lại nhiều lần.
+
+Template hỏi:
+```
+Tôi cần làm rõ một vài điểm trước khi thiết kế:
+
+1. [Câu hỏi về scope/boundary]
+2. [Câu hỏi về non-functional requirements nếu có]
+3. [Câu hỏi về edge cases quan trọng]
+
+Nếu bạn muốn tôi đưa ra assumptions và tiến hành luôn, gõ "proceed".
+```
+
+Nếu người dùng gõ `proceed`, tự đưa ra assumptions hợp lý và ghi rõ vào TDD.
+
+---
+
+### Bước 4 — Phân tích Codebase liên quan
+
+Dựa trên feature request và project overview, xác định:
+- Các entity/class nào sẽ bị ảnh hưởng
+- Các repository/service nào cần thêm method
+- Các migration nào cần tạo
+- Patterns hiện tại cần tuân theo
+
+Scan các file cụ thể liên quan và đọc nội dung để reference chính xác.
+
+---
+
+### Bước 5 — Sinh TDD
+
+Tạo file tại: `docs/tdd/tdd_[feature-name-kebab-case].md`
+
+Sử dụng template sau:
+
+```markdown
+# Technical Design Document: [Feature Name]
+
+> Status: Draft
+> Created: [DATE]
+> Feature Request: "[original chat input]"
+> Assumptions: [list các assumption nếu có]
+
+---
+
+## 1. Overview
+
+[Mô tả mục đích và scope của feature, 2-4 câu]
+
+---
+
+## 2. Requirements
+
+### 2.1 Functional Requirements
+
+[Danh sách requirements dạng user story hoặc bullet points]
+- FR-01: As a [role], I want to [action] so that [benefit]
+- FR-02: ...
+
+### 2.2 Non-Functional Requirements
+
+- NFR-01: [Performance / Security / Scalability requirement]
+- NFR-02: ...
+
+---
+
+## 3. Technical Design
+
+### 3.1 Data Model Changes
+
+[Mô tả thay đổi schema. Nếu không có thay đổi: "No schema changes required."]
+
+[ERD Mermaid nếu có entity mới]
+
+```mermaid
+erDiagram
+    ...
+```
+
+New/Modified Entities:
+| Entity | Change | Fields |
+|--------|--------|--------|
+| ... | Add/Modify/None | ... |
+
+### 3.2 API Changes
+
+[Mô tả các endpoint mới hoặc thay đổi]
+
+**New Endpoints:**
+
+| Method | Path | Request | Response | Handler |
+|--------|------|---------|----------|---------|
+| POST | /api/... | `CreateXxxCommand` | `Result<Guid>` | `CreateXxxCommandHandler` |
+
+**Request/Response Examples:**
+```json
+// POST /api/xxx
+{
+  "field1": "value1"
+}
+
+// Response 200
+{
+  "id": "uuid",
+  "success": true
+}
+```
+
+### 3.3 UI Changes
+
+[Nếu có Blazor/React component thay đổi. Nếu không: "No UI changes required."]
+
+### 3.4 Logic Flow
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant API
+    participant Handler
+    participant Repository
+    participant DB
+
+    Client->>API: [Request]
+    API->>Handler: [Command/Query]
+    Handler->>Repository: [DB Operation]
+    Repository->>DB: [SQL]
+    DB-->>Repository: [Result]
+    Repository-->>Handler: [Entity]
+    Handler-->>API: Result<T>
+    API-->>Client: [Response]
+```
+
+### 3.5 New Classes / Files to Create
+
+| File Path | Class Name | Responsibility |
+|-----------|-----------|----------------|
+| `Application/[Feature]/Commands/CreateXxx/CreateXxxCommand.cs` | `CreateXxxCommand` | CQRS command record |
+| `Application/[Feature]/Commands/CreateXxx/CreateXxxCommandHandler.cs` | `CreateXxxCommandHandler` | Business logic |
+| `Application/[Feature]/Commands/CreateXxx/CreateXxxCommandValidator.cs` | `CreateXxxCommandValidator` | FluentValidation |
+| ... | ... | ... |
+
+### 3.6 Existing Files to Modify
+
+| File Path | Change Description |
+|-----------|-------------------|
+| `Domain/Entities/XxxEntity.cs` | Add method `DoSomething()` |
+| `Infrastructure/Persistence/XxxRepository.cs` | Add method `GetByXxxAsync()` |
+| ... | ... |
+
+### 3.7 Dependencies
+
+[NuGet packages / npm packages mới cần thêm. Nếu không: "No new dependencies required."]
+
+### 3.8 Security Considerations
+
+- [Input validation approach]
+- [Authorization requirements]
+- [Data sensitivity notes]
+
+### 3.9 Performance Considerations
+
+- [Caching strategy nếu cần]
+- [Query optimization notes]
+- [Async/await requirements]
+
+---
+
+## 4. Testing Plan
+
+### Unit Tests
+| Class | Test Cases |
+|-------|-----------|
+| `CreateXxxCommandHandler` | Success case, Not found case, Validation failure |
+| ... | ... |
+
+### Integration Tests (if applicable)
+- [Mô tả integration test scenarios]
+
+---
+
+## 5. Open Questions
+
+- [ ] [Câu hỏi chưa resolve] → Owner: [Dev/PO/Architect]
+- [ ] ...
+
+*(Nếu không có: "None")*
+
+---
+
+## 6. Alternatives Considered
+
+| Alternative | Reason Rejected |
+|-------------|----------------|
+| [Option A] | [Why not] |
+| ... | ... |
+
+*(Nếu không có: "Not applicable")*
+```
+
+---
+
+### Bước 6 — Thông báo hoàn thành
+
+```
+✅ TDD đã được tạo tại: docs/tdd/tdd_[feature-name].md
+
+📋 Tóm tắt:
+- [N] Functional Requirements
+- [N] New files cần tạo
+- [N] Existing files cần modify
+- Database migration: [Yes/No]
+- Open questions: [N]
+
+🚀 Bước tiếp theo:
+  Để breakdown thành task list, gõ:
+  /breakdown docs/tdd/tdd_[feature-name].md
+  
+  Hoặc nếu muốn review TDD trước, gõ "review TDD" để tôi trình bày lại.
+```
+
+---
+
+## Lưu ý quan trọng
+
+- **Luôn reference file thực tế**: Mọi class/file được đề cập phải có path thực tế trong project, không phải placeholder chung chung.
+- **Nhất quán với patterns hiện tại**: Nếu project dùng CQRS, mọi feature đều phải theo CQRS. Không đề xuất pattern khác trừ khi có lý do chính đáng và ghi rõ vào Alternatives.
+- **Không over-engineer**: YAGNI — chỉ thiết kế những gì thực sự cần cho feature này.
+- **File naming**: TDD file dùng kebab-case: `tdd_create-user-auth.md`, `tdd_export-config-excel.md`

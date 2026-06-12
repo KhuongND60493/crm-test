@@ -1,0 +1,260 @@
+---
+description: Chuyển TDD file thành task checklist chi tiết. Trigger: /breakdown <tdd-file-path>
+globs:
+alwaysApply: false
+---
+
+# Rule: Task Breakdown Generator
+
+## Trigger
+
+Kích hoạt rule này khi người dùng gõ một trong các lệnh sau vào chat:
+
+```
+/breakdown <tdd_file_path>
+/breakdown (sau khi TDD vừa được sinh bởi rule 02_tdd_generator)
+breakdown this TDD
+```
+
+Ví dụ:
+```
+/breakdown docs/tdd/tdd_create-user-auth.md
+/breakdown                          ← dùng TDD vừa được tạo trong cùng conversation
+```
+
+---
+
+## Mục tiêu
+
+Nhận TDD **từ file path hoặc trực tiếp từ context chat** (không cần paste nội dung thủ công),
+tự động phân tích và sinh ra task breakdown checklist chi tiết, actionable, lưu thành file
+để rule `04_implementation` có thể consume trực tiếp.
+
+---
+
+## Workflow
+
+### Bước 1 — Resolve TDD Source
+
+**Trường hợp A — Có file path:**
+Đọc file TDD từ path được cung cấp. Nếu không tìm thấy file, thông báo lỗi và dừng.
+
+**Trường hợp B — Không có file path (gõ `/breakdown` đơn thuần):**
+Kiểm tra conversation hiện tại. Nếu rule `02_tdd_generator` vừa chạy và sinh ra TDD,
+sử dụng TDD đó trực tiếp từ context mà không cần đọc file.
+
+**Trường hợp C — Không có TDD nào:**
+```
+⚠️ Không tìm thấy TDD. Bạn có thể:
+1. Cung cấp path: /breakdown docs/tdd/tdd_feature-name.md
+2. Tạo TDD trước: /tdd <mô tả feature>
+3. Paste nội dung TDD trực tiếp vào chat
+```
+
+---
+
+### Bước 2 — Phân tích TDD
+
+Đọc và trích xuất từ TDD:
+- Danh sách files cần tạo mới (section 3.5)
+- Danh sách files cần modify (section 3.6)
+- Data model changes (section 3.1) → xác định có cần migration không
+- API changes (section 3.2) → xác định controllers/endpoints
+- Dependencies mới (section 3.7)
+- Open questions (section 5) → flag nếu có câu hỏi chưa resolve
+
+Nếu có Open Questions chưa resolve, cảnh báo:
+```
+⚠️ TDD còn [N] open question chưa resolve. Breakdown vẫn sẽ được tạo
+   nhưng các task liên quan sẽ được đánh dấu (BLOCKED: pending answer).
+```
+
+---
+
+### Bước 3 — Sinh Task Breakdown
+
+Tạo file tại: `docs/tasks/tasks_[feature-name-kebab-case].md`
+
+Sử dụng template sau:
+
+```markdown
+# Task Breakdown: [Feature Name]
+
+> TDD Reference: [path to TDD file]
+> Created: [DATE]
+> Status: In Progress
+> 
+> Progress: 0 / [total] tasks completed
+
+---
+
+## 🗄️ Database
+
+- [ ] Task DB-01: [Nếu có migration] Tạo EF Core migration `[MigrationName]`
+  - Các thay đổi: [list các table/column changes từ TDD section 3.1]
+  - Command: `dotnet ef migrations add [MigrationName] --project [ProjectName].Infrastructure`
+  - ⚠️ Review migration script trước khi apply
+
+- [ ] Task DB-02: [Nếu có seed data] Tạo seed data cho [entity]
+
+*Nếu không có thay đổi DB: "No database changes required for this feature."*
+
+---
+
+## 🏛️ Domain Layer
+
+- [ ] Task DM-01: [Nếu có entity mới] Tạo entity `[EntityName]`
+  - File: `[ProjectName].Domain/Entities/[EntityName].cs`
+  - Extends: `BaseAuditableEntity` / `BaseEntity`
+  - Properties: [list từ TDD]
+  - Business methods: [list từ TDD]
+
+- [ ] Task DM-02: [Nếu có value object mới] Tạo value object `[ValueObjectName]`
+  - File: `[ProjectName].Domain/ValueObjects/[ValueObjectName].cs`
+
+- [ ] Task DM-03: [Nếu modify entity] Thêm method `[MethodName]()` vào `[EntityName]`
+  - File: `[existing file path]`
+  - Logic: [mô tả từ TDD]
+
+---
+
+## 📦 Application Layer
+
+### Interfaces
+
+- [ ] Task APP-01: [Nếu cần interface mới] Tạo interface `[IServiceName]`
+  - File: `[ProjectName].Application/Interfaces/[IServiceName].cs`
+  - Methods: [list methods]
+
+### Commands
+
+- [ ] Task APP-02: Tạo `[CommandName]` record
+  - File: `[ProjectName].Application/[Feature]/Commands/[Action][Entity]/[CommandName].cs`
+  - Properties: [list từ TDD]
+
+- [ ] Task APP-03: Implement `[CommandName]Handler`
+  - File: `...Handler.cs` (cùng folder với command)
+  - Inject: [list dependencies từ TDD]
+  - Logic:
+    - [ ] [Step 1 từ TDD logic flow]
+    - [ ] [Step 2]
+    - [ ] [Step 3]
+    - [ ] Return `Result<T>`
+
+- [ ] Task APP-04: Tạo `[CommandName]Validator`
+  - File: `...Validator.cs` (cùng folder với command)
+  - Rules: [list validation rules từ TDD requirements]
+
+### Queries (nếu có)
+
+- [ ] Task APP-05: Tạo `[QueryName]` record
+  - File: `[ProjectName].Application/[Feature]/Queries/[QueryName]/[QueryName].cs`
+
+- [ ] Task APP-06: Implement `[QueryName]Handler`
+  - File: `...Handler.cs`
+  - Logic: [mô tả]
+
+---
+
+## 🔧 Infrastructure Layer
+
+- [ ] Task INF-01: [Nếu cần] Thêm method `[MethodName]Async()` vào `[RepositoryName]`
+  - File: `[ProjectName].Infrastructure/Persistence/Repositories/[RepositoryName].cs`
+  - SQL/LINQ logic: [mô tả từ TDD]
+
+- [ ] Task INF-02: [Nếu cần] Thêm `DbSet<[EntityName]>` vào `[DbContextName]`
+  - File: `[ProjectName].Infrastructure/Persistence/[DbContextName].cs`
+
+- [ ] Task INF-03: [Nếu cần] Tạo EF Core configuration `[EntityName]Configuration`
+  - File: `[ProjectName].Infrastructure/Persistence/Configurations/[EntityName]Configuration.cs`
+
+- [ ] Task INF-04: [Nếu cần external service] Implement `[ServiceName]`
+  - File: `[ProjectName].Infrastructure/Services/[ServiceName].cs`
+  - Implements: `[IServiceName]`
+  - ⚠️ Sử dụng Circuit Breaker nếu gọi external HTTP/queue
+
+- [ ] Task INF-05: [Nếu cần] Đăng ký DI trong `DependencyInjection.cs`
+
+---
+
+## 🌐 API / Presentation Layer
+
+- [ ] Task API-01: [Nếu endpoint mới] Thêm action `[ActionName]` vào `[ControllerName]`
+  - File: `[ProjectName].Web/Controllers/[ControllerName].cs`
+  - Route: `[METHOD] [/api/path]`
+  - Authorization: `[roles/policies]`
+
+- [ ] Task API-02: [Nếu Blazor] Cập nhật component `[ComponentName].razor`
+  - File: `[ProjectName].Web/Admin/[ComponentName].razor`
+  - Changes: [mô tả UI changes từ TDD]
+
+---
+
+## 🧪 Testing
+
+- [ ] Task TEST-01: Unit test cho `[CommandName]Handler`
+  - File: `[ProjectName].Tests/Application/[Feature]/[CommandName]HandlerTests.cs`
+  - Test cases:
+    - [ ] Happy path — [mô tả]
+    - [ ] [Edge case 1] — [mô tả]
+    - [ ] [Edge case 2] — [mô tả]
+    - [ ] Validation failure — [mô tả]
+
+- [ ] Task TEST-02: [Nếu có] Unit test cho Domain entity methods
+  - File: `[ProjectName].Tests/Domain/[EntityName]Tests.cs`
+
+- [ ] Task TEST-03: [Nếu cần] Integration test cho [flow]
+  - File: `[ProjectName].Tests/Integration/[FeatureName]Tests.cs`
+
+---
+
+## 📝 Documentation
+
+- [ ] Task DOC-01: Cập nhật `docs/project_overview.md` nếu có domain model mới
+- [ ] Task DOC-02: Cập nhật TDD status từ `Draft` → `Implemented`
+  - File: `docs/tdd/tdd_[feature-name].md` → đổi `Status: Draft` thành `Status: Implemented`
+
+---
+
+## ⚠️ Blocked Tasks (nếu có open questions)
+
+- [ ] Task BLK-01: [Task bị block] — BLOCKED: [mô tả open question cần resolve]
+  - Unblock khi: [điều kiện]
+
+```
+
+---
+
+### Bước 4 — Thông báo hoàn thành
+
+```
+✅ Task breakdown đã được tạo tại: docs/tasks/tasks_[feature-name].md
+
+📊 Tổng quan:
+- 🗄️ Database tasks:    [N]
+- 🏛️ Domain tasks:      [N]
+- 📦 Application tasks: [N]
+- 🔧 Infrastructure:    [N]
+- 🌐 API/UI tasks:      [N]
+- 🧪 Testing tasks:     [N]
+- 📝 Doc tasks:         [N]
+- ⚠️ Blocked tasks:     [N]
+──────────────────────────
+   Total: [N] tasks
+
+🚀 Bước tiếp theo:
+  Để bắt đầu implement, gõ:
+  /implement docs/tasks/tasks_[feature-name].md
+  
+  Hoặc chỉ định task cụ thể:
+  /implement docs/tasks/tasks_[feature-name].md --task DB-01
+```
+
+---
+
+## Lưu ý quan trọng
+
+- **Task phải có file path cụ thể**: Mỗi task phải ghi rõ file path thực tế trong project, không dùng placeholder như `<your-file>`.
+- **Granularity**: Mỗi task nên hoàn thành được trong 2-4 giờ. Nếu task quá lớn, tách nhỏ hơn.
+- **Ordering**: Tasks được sắp xếp theo dependency — Domain trước, Application sau, Infrastructure, rồi API, cuối cùng là Testing.
+- **Không duplicate**: Nếu một file đã được tạo ở task trước, task sau chỉ cần "Modify" không phải "Create".

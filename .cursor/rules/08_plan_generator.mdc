@@ -1,0 +1,264 @@
+---
+description: Đọc SPEC hoặc TDD và sinh task file cho /implement. Trigger: /plan <spec-file>
+globs:
+alwaysApply: false
+---
+
+# Rule: Plan Generator (Cursor)
+
+## Trigger
+
+Kích hoạt khi người dùng gõ:
+
+```
+/plan <spec-file-path>
+/plan                     ← tìm SPEC mới nhất tự động
+/plan --from-tdd <tdd-file>  ← plan từ TDD thay vì SPEC
+```
+
+Ví dụ:
+```
+/plan .ai/specs/SPEC-order-cancellation.md
+/plan docs/tdd/tdd_export-excel.md --from-tdd
+/plan
+```
+
+---
+
+## Mục tiêu
+
+Cursor đọc SPEC (hoặc TDD) + `docs/codebase/` → sinh ra **task file** trực tiếp,
+sẵn sàng để `/implement` chạy ngay.
+
+**Khác với Claude `/plan`:**
+- Claude `/plan` → output: `.ai/plans/PLAN-*.md` (architecture document)
+- Cursor `/plan` → output: `docs/tasks/tasks_*.md` (task checklist cho `/implement`)
+
+Cursor không cần viết document — cần task list để làm việc.
+
+---
+
+## Workflow
+
+### Bước 1 — Resolve source
+
+**Có file path** → đọc file đó.
+
+**Không có path** → tìm theo thứ tự:
+1. `.ai/specs/` — file `.md` mới nhất
+2. `docs/tdd/` — file `.md` mới nhất
+3. Hỏi user nếu không tìm thấy gì.
+
+---
+
+### Bước 2 — Đọc SPEC trước, pull docs theo nhu cầu
+
+**Đọc SPEC/TDD trước** — từ đó xác định cần pull docs gì.
+
+**Nếu `.codegraph/` tồn tại — dùng CodeGraph để explore:**
+```
+codegraph_explore("How does [feature từ SPEC] work?")
+codegraph_search("[EntityName / ServiceName từ §8 SPEC]")
+```
+→ CodeGraph trả về call graph + relevant snippets. Chỉ Read file nếu cần full content.
+
+**Nếu không có CodeGraph:**
+```
+SPEC có gì?                 Pull thêm:
+──────────────────────      ───────────────────────────────
+Entity/domain changes     → docs/codebase/entity-map.md
+New service/handler       → docs/codebase/di-registry.md
+DB schema changes         → docs/codebase/db-schema.md
+API endpoint changes      → docs/codebase/api-endpoints.md
+```
+
+Luôn đọc:
+- `docs/project_overview.md` — folder structure, naming conventions, patterns
+
+Nếu `docs/codebase/` còn là stub:
+```
+⚠️ docs/codebase/ chưa generate.
+Chạy /scan-codebase trong Claude Code để tiết kiệm token ở các lần sau.
+Tôi sẽ tiếp tục bằng cách đọc source files liên quan trực tiếp.
+```
+→ Nếu không có docs, chỉ đọc source files được SPEC/TDD chỉ ra, không scan toàn bộ.
+
+---
+
+### Bước 3 — Warn nếu còn Open Questions
+
+Nếu SPEC/TDD có Open Questions chưa resolve:
+```
+⚠️ SPEC còn [N] open question chưa resolve.
+   Tasks liên quan sẽ được đánh dấu (⚠️ PENDING DECISION).
+   Tiếp tục? (yes / no)
+```
+
+---
+
+### Bước 4 — Sinh task file
+
+Tạo: `docs/tasks/tasks_[feature-name-kebab-case].md`
+
+**Tên file lấy từ SPEC tên feature, không phải SPEC filename.**
+
+---
+
+#### Format task file (Cursor-native):
+
+```markdown
+# Tasks: [Feature Name]
+
+> SPEC: [path to SPEC or TDD file]
+> PLAN source: Cursor /plan
+> Created: [DATE]
+> Status: In Progress
+>
+> Progress: 0 / [N] tasks completed
+
+---
+
+[Chỉ include section có tasks. Bỏ section rỗng.]
+
+## 🗄️ Database
+*(chỉ nếu có migration)*
+
+- [ ] **DB-01** — Migration `[MigrationName]`
+  - File: `[InfraProject]/Migrations/` (auto-generated)
+  - Command: `dotnet ef migrations add [Name] --project [InfraProject]`
+  - Thay đổi: [table/column/index cụ thể]
+  - ⚠️ Review migration script trước khi apply
+
+---
+
+## 🏛️ Domain
+
+- [ ] **DM-01** — [Create/Modify] `[EntityName]`
+  - File: `[exact/path/EntityName.cs]`
+  - Base: `[BaseEntity / BaseAuditableEntity]`
+  - Thêm:
+    - [ ] Property `[Name]` : `[Type]` — [ghi chú nếu có]
+    - [ ] Method `[MethodName]([params])` — [mô tả logic ngắn]
+  - Pattern: xem entity tương tự tại `[reference file]`
+
+---
+
+## 📦 Application
+
+- [ ] **APP-01** — Create `[CommandName]` record
+  - File: `[ProjectName].Application/[Feature]/Commands/[Action][Entity]/[CommandName].cs`
+  - Properties: [list]
+  - Implements: `IRequest<Result<[Type]>>`
+
+- [ ] **APP-02** — Implement `[HandlerName]`
+  - File: `[...]/[CommandName]Handler.cs` (cùng folder APP-01)
+  - Inject: `[IRepository]`, `[IUnitOfWork]` *(lấy từ di-registry.md)*
+  - Logic:
+    - [ ] Validate input
+    - [ ] [Step 2 từ SPEC flow]
+    - [ ] [Step 3]
+    - [ ] `await _uow.SaveChangesAsync(ct)`
+    - [ ] Return `Result.Success([value])`
+  - Error cases:
+    - [ ] [Entity] not found → `Result.Failure([Entity]Errors.NotFound(id))`
+
+- [ ] **APP-03** — Create `[CommandName]Validator`
+  - File: `[...]/[CommandName]Validator.cs` (cùng folder APP-01)
+  - Rules:
+    - [ ] [Field] not empty
+    - [ ] [Field] max length [N]
+    - [ ] [Business rule từ SPEC]
+
+*(Thêm Query sections tương tự nếu SPEC có query)*
+
+---
+
+## 🔧 Infrastructure
+
+- [ ] **INF-01** — Thêm `[MethodName]Async()` vào `[RepositoryName]`
+  - File: `[exact/path/Repository.cs]`
+  - Signature: `Task<[ReturnType]?> [MethodName]Async([params], CancellationToken ct)`
+  - Query: [mô tả: AsNoTracking, filter, project sang DTO]
+
+- [ ] **INF-02** — Register DI *(nếu có service/repo mới)*
+  - File: `[exact/path/DependencyInjection.cs]` *(lấy từ di-registry.md)*
+  - Method: `[AddXxx()]`
+  - Thêm: `services.[Scoped/Singleton]<[IInterface], [Class]>()`
+
+---
+
+## 🌐 API / Presentation
+*(chỉ nếu SPEC có endpoint mới)*
+
+- [ ] **API-01** — Thêm action `[ActionName]` vào `[ControllerName]`
+  - File: `[exact/path/Controller.cs]`
+  - Route: `[POST/PUT/DELETE/GET] [/api/route]`
+  - Request body: `[CommandName]`
+  - Response: `Result<[Type]>` → 200/201
+  - Auth: `[Authorize(Policy="...")] / [AllowAnonymous]`
+
+---
+
+## 🧪 Testing
+*(chỉ nếu SPEC yêu cầu hoặc handler phức tạp)*
+
+- [ ] **TEST-01** — Unit test `[HandlerName]`
+  - File: `[TestProject]/[Feature]/[HandlerName]Tests.cs`
+  - Cases:
+    - [ ] Happy path: [mô tả]
+    - [ ] Not found: [mô tả]
+    - [ ] Validation failure: [mô tả]
+
+---
+
+## 📝 Documentation
+
+- [ ] **DOC-01** — Cập nhật `docs/codebase/entity-map.md` *(nếu thêm entity)*
+- [ ] **DOC-02** — Đổi SPEC status: `Draft` → `Implemented`
+  - File: `[path to SPEC]`
+
+---
+
+[Nếu có pending decisions từ Open Questions:]
+## ⚠️ Pending Decisions
+
+- [ ] **PENDING-01** — [Mô tả open question] — BLOCKED cho đến khi resolve
+```
+
+---
+
+### Bước 5 — Báo cáo hoàn thành
+
+```
+✅ Task file created: docs/tasks/tasks_[feature-name].md
+
+📊 Tasks:
+   🗄️  DB:          [N] (hoặc –)
+   🏛️  Domain:      [N]
+   📦  Application: [N]
+   🔧  Infra:       [N]
+   🌐  API/UI:      [N]
+   🧪  Testing:     [N]
+   ──────────────────
+   Total:           [N] tasks
+
+[Nếu có pending decisions:]
+⚠️  [N] pending decision(s) — tasks bị block cho đến khi resolve.
+
+🚀 Implement ngay:
+   /implement docs/tasks/tasks_[feature-name].md
+
+📋 Sau khi implement xong, Claude Code review:
+   /handoff docs/tasks/tasks_[feature-name].md
+```
+
+---
+
+## Nguyên tắc quan trọng
+
+- **File paths phải chính xác** — lấy từ `docs/project_overview.md` và `docs/codebase/`
+- **Bỏ section rỗng** — nếu không có DB changes, không có section Database
+- **Mỗi task = 2-4 giờ** — task quá lớn thì tách nhỏ
+- **Follow existing patterns** — xem `docs/project_overview.md` §3 và `docs/codebase/di-registry.md`
+- **Progress counter** — cập nhật sau mỗi task hoàn thành
+- **.NET 6 constraints** — ghi vào Cursor Notes nếu feature có risk

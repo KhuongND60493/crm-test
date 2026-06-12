@@ -1,0 +1,109 @@
+---
+description: .NET 6 code review lenses — 10 điểm kiểm tra. Auto-loads khi review file C#. Dùng cùng /dotnet-review.
+globs:
+  - "**/*.cs"
+alwaysApply: false
+---
+
+# .NET 6 — 10 Review Lenses
+
+> ⚠️ Đọc `docs/project_overview.md` trước khi review để biết: DB provider (MySQL/PG), architecture pattern, naming convention.
+
+> 🔴 BLOCK = fix trước merge · 🟡 WARN = nên fix · 🔵 NOTE = optional · ✅ = pattern tốt
+
+---
+
+## L1 — Async Correctness
+- 🔴 `.Result` / `.Wait()` / `.GetAwaiter().GetResult()` trên non-background thread → deadlock
+- 🔴 `async void` ngoài event handler → unhandled exception crash process
+- 🟡 `CancellationToken` không được truyền qua async chain
+- 🟡 `await` bên trong `lock {}` block
+- 🟡 `Task.Run()` bọc synchronous I/O thay vì dùng async API thật
+
+## L2 — EF Core Query Safety
+- 🔴 List query không `.Where`/`.Take` → full table scan, OOM dưới tải
+- 🔴 Query trong loop → N+1 (batch với `.Contains` + `.ToLookup`)
+- 🟡 Thiếu `AsNoTracking()` trên read-only query → unnecessary change tracking
+- 🟡 Load full entity chỉ để lấy 1-2 field (thiếu `.Select()` projection)
+- 🟡 `.ToList().Count` thay vì `.CountAsync(ct)` → load toàn bộ vào RAM
+
+## L3 — DI Lifetime
+- 🔴 Inject Scoped vào Singleton → captive dependency, stale DbContext
+- 🔴 `BackgroundService` inject `DbContext` / `IUnitOfWork` trực tiếp → dùng `IServiceScopeFactory`
+- 🟡 `IServiceProvider.GetService<T>()` ở Application layer → service locator anti-pattern
+- 🟡 `IOptionsSnapshot<T>` inject vào Singleton → dùng `IOptionsMonitor<T>`
+
+## L4 — Exception Handling
+- 🔴 `catch (Exception) { return null; }` → silent failure, mất trace
+- 🔴 `throw ex;` → reset stack trace (dùng `throw;`)
+- 🟡 Không phân biệt PostgresException theo SqlState (UniqueViolation, Deadlock, FK)
+- 🟡 `OperationCanceledException` bị catch chung không re-throw → CT bị nuốt
+- 🟡 Exception dùng cho control flow (try/catch thay vì check null/Result)
+
+## L5 — Security & Data Leakage
+- 🔴 `FromSqlRaw($"...{variable}...")` hoặc `FromSqlRaw("... " + variable)` → SQL injection (MySQL và PG đều bị)
+- 🔴 Log PII: Password, Token, CardNumber, OTP, ConnectionString, PhoneNumber
+- 🔴 Thiếu `StoreId` filter trên multi-tenant query → cross-tenant data leak
+- 🟡 Return domain entity trực tiếp từ controller → expose EF navigation props
+- 🟡 CORS wildcard `*` trong production config
+- 🟡 Secret / connection string hardcode trong source code
+
+## L6 — Resource Management
+- 🔴 `new HttpClient()` trong service method → socket exhaustion
+- 🟡 `IDisposable` không `using` / `await using` → resource leak
+- 🟡 Transaction không rollback trong catch block → inconsistent state
+- 🟡 `MemoryStream` / `StreamWriter` không dispose
+
+## L7 — Performance
+- 🟡 String concat (`+=`) trong loop → O(n²) allocation, dùng `StringBuilder`
+- 🟡 `.ToList()` giữa LINQ chain → early materialization, in-memory filter
+- 🟡 `float` / `double` cho giá tiền tệ → precision error, dùng `decimal`
+- 🔵 `Count() > 0` → dùng `Any()` (short-circuit)
+- 🔵 `DateTime.Now` trong loop → dùng `DateTimeOffset.UtcNow` 1 lần ngoài loop
+
+## L8 — Domain Model Integrity
+- 🟡 `public set` trên property domain quan trọng → bypass business rule
+- 🟡 Business logic trong Handler thay vì Entity method → anemic domain model
+- 🔵 Invariant không enforce (vd: Order có thể có 0 items)
+- 🔵 Value Object implement như primitive (không có validation, equality)
+
+## L9 — Observability
+- 🟡 `_logger.LogError($"Error: {ex.Message}")` → mất stack trace
+  Dùng: `_logger.LogError(ex, "Order {OrderId} failed", id)`
+- 🟡 Log level sai: `LogDebug`/`LogTrace` trong hot path production
+- 🟡 `Debug.WriteLine(...)` trong production code
+- 🔵 Thiếu structured property (StoreId, OrderId) trong log → khó trace
+- 🔵 Thiếu OTel span trên business operation quan trọng
+
+## L10 — .NET 6 / C# 10 Compatibility
+- 🔴 Primary constructors `class S(IRepo r)` → C# 12, không compile trên .NET 6
+- 🔴 `FrozenDictionary` / `SearchValues` / `TimeProvider` / `IExceptionHandler` → .NET 8
+- 🔴 `AddResilienceHandler` (Polly v8 syntax) → yêu cầu .NET 7+
+- 🔴 `[GeneratedRegex]` → .NET 7+ (dùng `new Regex(p, RegexOptions.Compiled)`)
+- 🔴 Collection expressions `[1, 2, 3]` → C# 12
+- 🟡 `ArgumentException.ThrowIfNullOrEmpty` → .NET 7 (manual check thay thế)
+
+---
+
+## Output format (dùng cho /dotnet-review)
+
+```
+🔍 .NET Review: [FileName]
+🔴 Blocking: N | 🟡 Warning: N | 🔵 Note: N
+Verdict: ✅ APPROVED / ⚠️ NEEDS FIX / 🔴 BLOCKED
+Saved: .ai/reviews/DOTNET-REVIEW-[name]-[DATE].md
+
+BLOCK-01 · L[#] · [file:line]
+  Found:   [snippet]
+  Problem: [vấn đề + impact]
+  Fix:     [corrected snippet]
+
+WARN-01 · L[#] · [file:line]
+  Found/Problem/Suggestion
+
+✅ Good: [ClassName.Method] — [tại sao tốt]
+
+  fix BLOCK-01 now     → Claude Code fix trực tiếp
+  /fix-task BLOCK-01   → Task file cho Cursor fix
+  accept warnings      → Log TODO, proceed
+```
