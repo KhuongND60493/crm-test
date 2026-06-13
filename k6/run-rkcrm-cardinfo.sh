@@ -13,7 +13,7 @@ fi
 unset RPS DURATION PRE_VUS MAX_VUS
 
 ENV_FILE="${SCRIPT_DIR}/.env.k6" \
-COUPON_CODES_FILE="${SCRIPT_DIR}/coupon-stg.txt" \
+COUPON_CODES_FILE="${SCRIPT_DIR}/cp1.txt" \
 TARGET_URL="${RKCRM_URL}" \
 SKIP_COUPON_FETCH=1 \
 bash "${SCRIPT_DIR}/run.sh" "${SCRIPT_DIR}/k6-rkcrm-cardinfo.js"

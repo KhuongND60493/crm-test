@@ -6,7 +6,7 @@ const RPS = Number(__ENV.K6_RPS || __ENV.RPS || 10);
 const DURATION = __ENV.K6_DURATION || __ENV.DURATION || "30s";
 const PRE_VUS = Number(__ENV.K6_PRE_VUS || __ENV.PRE_VUS || 20);
 const MAX_VUS = Number(__ENV.K6_MAX_VUS || __ENV.MAX_VUS || 200);
-const COUPON_CODES_FILE = __ENV.COUPON_CODES_FILE || "./coupon-codes.txt";
+const COUPON_CODES_FILE = __ENV.COUPON_CODES_FILE || "./cp1.txt";
 
 const ACTION = __ENV.RKCRM_ACTION || "Get coupon info";
 const TERMINAL_TYPE = __ENV.TERMINAL_TYPE || "CRM_DCORP";
@@ -50,6 +50,7 @@ export default function () {
   const randomIndex = Math.floor(Math.random() * couponCodes.length);
   const randomCouponCode = couponCodes[randomIndex];
   const xmlPayload = buildXmlPayload(randomCouponCode);
+  console.log(xmlPayload);
   const res = http.post(TARGET_URL, xmlPayload, {
     headers: {
       "Content-Type": "application/xml; charset=utf-8",
