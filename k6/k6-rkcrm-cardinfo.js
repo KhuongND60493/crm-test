@@ -1,7 +1,9 @@
 import http from "k6/http";
 import { check } from "k6";
+import { scenario } from "k6/execution";
 
 const TARGET_URL = __ENV.TARGET_URL || "http://127.0.0.1:8100";
+const TARGET_URL_SV2 = __ENV.TARGET_URL_SV2 || "";
 const RPS = Number(__ENV.K6_RPS || __ENV.RPS || 10);
 const DURATION = __ENV.K6_DURATION || __ENV.DURATION || "30s";
 const PRE_VUS = Number(__ENV.K6_PRE_VUS || __ENV.PRE_VUS || 20);
@@ -10,6 +12,13 @@ const COUPON_CODES_FILE = __ENV.COUPON_CODES_FILE || "./cp1.txt";
 
 const ACTION = __ENV.RKCRM_ACTION || "Get coupon info";
 const TERMINAL_TYPE = __ENV.TERMINAL_TYPE || "CRM_DCORP";
+
+const RATIO_1 = Number(__ENV.K6_RATIO_1 || 0);
+const RATIO_2 = Number(__ENV.K6_RATIO_2 || 0);
+const DUAL_MODE = (RATIO_1 + RATIO_2 === 100) && TARGET_URL_SV2 !== "";
+
+const RPS_1 = DUAL_MODE ? Math.floor(RPS * RATIO_1 / 100) : RPS;
+const RPS_2 = DUAL_MODE ? Math.floor(RPS * RATIO_2 / 100) : 0;
 
 const couponCodes = open(COUPON_CODES_FILE)
   .split(/\r?\n/)
@@ -29,29 +38,65 @@ function buildXmlPayload(couponCode) {
 </Message>`;
 }
 
-export const options = {
-  scenarios: {
-    rkcrm_cardinfo_load: {
+function buildDualScenarios() {
+  const scenarios = {};
+  const thresholds = {};
+  if (RPS_1 > 0) {
+    scenarios.rkcrm_cardinfo_sv1 = {
       executor: "constant-arrival-rate",
-      rate: RPS,
+      rate: RPS_1,
       timeUnit: "1s",
       duration: DURATION,
-      preAllocatedVUs: PRE_VUS,
-      maxVUs: MAX_VUS,
-    },
-  },
-  thresholds: {
-    http_req_failed: ["rate<0.05"],
-    http_req_duration: ["p(95)<3000", "p(99)<8000"],
-  },
-};
+      preAllocatedVUs: Math.max(1, Math.ceil(PRE_VUS * RATIO_1 / 100)),
+      maxVUs: Math.max(1, Math.ceil(MAX_VUS * RATIO_1 / 100)),
+      tags: { server: "sv1" },
+    };
+    thresholds["http_req_failed{server:sv1}"] = ["rate<0.05"];
+  }
+  if (RPS_2 > 0) {
+    scenarios.rkcrm_cardinfo_sv2 = {
+      executor: "constant-arrival-rate",
+      rate: RPS_2,
+      timeUnit: "1s",
+      duration: DURATION,
+      preAllocatedVUs: Math.max(1, Math.ceil(PRE_VUS * RATIO_2 / 100)),
+      maxVUs: Math.max(1, Math.ceil(MAX_VUS * RATIO_2 / 100)),
+      tags: { server: "sv2" },
+    };
+    thresholds["http_req_failed{server:sv2}"] = ["rate<0.05"];
+  }
+  return { scenarios, thresholds };
+}
+
+const dualConfig = DUAL_MODE ? buildDualScenarios() : null;
+
+export const options = DUAL_MODE
+  ? { scenarios: dualConfig.scenarios, thresholds: dualConfig.thresholds }
+  : {
+      scenarios: {
+        rkcrm_cardinfo_load: {
+          executor: "constant-arrival-rate",
+          rate: RPS,
+          timeUnit: "1s",
+          duration: DURATION,
+          preAllocatedVUs: PRE_VUS,
+          maxVUs: MAX_VUS,
+        },
+      },
+      thresholds: {
+        http_req_failed: ["rate<0.05"],
+      },
+    };
 
 export default function () {
+  const url = DUAL_MODE
+    ? (scenario.name === "rkcrm_cardinfo_sv2" ? TARGET_URL_SV2 : TARGET_URL)
+    : TARGET_URL;
+
   const randomIndex = Math.floor(Math.random() * couponCodes.length);
   const randomCouponCode = couponCodes[randomIndex];
   const xmlPayload = buildXmlPayload(randomCouponCode);
-  console.log(xmlPayload);
-  const res = http.post(TARGET_URL, xmlPayload, {
+  const res = http.post(url, xmlPayload, {
     headers: {
       "Content-Type": "application/xml; charset=utf-8",
       Accept: "application/xml, text/xml, */*",

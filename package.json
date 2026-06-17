@@ -7,6 +7,8 @@
     "fetch-coupons": "node k6/fetch-coupons.js",
     "test-mcr": "bash ./k6/run.sh",
     "test-rkcrm-cardinfo": "bash ./k6/run-rkcrm-cardinfo.sh",
+    "stress-rkcrm-sv2": "sh -c 'set -a; . ./k6/.env.k6; set +a; k6 run -e TARGET_URL=\"$TARGET_URL_RKCRM_2\" -e COUPON_CODES_FILE=./cp1.txt -e RKCRM_ACTION=\"Get coupon info\" ./k6/k6-rkcrm-cardinfo-stress.js'",
+    "stress-rkcrm-sv1": "sh -c 'set -a; . ./k6/.env.k6; set +a; k6 run -e TARGET_URL=\"$TARGET_URL_RKCRM\" -e COUPON_CODES_FILE=./cp1.txt -e RKCRM_ACTION=\"Get coupon info\" ./k6/k6-rkcrm-cardinfo-stress.js'",
     "test-newapp-cardinfo": "bash ./k6/run-newapp-cardinfo.sh",
     "test-rkcrm-cardholder": "bash ./k6/run-rkcrm-cardholder.sh",
     "test": "sh -c 'set -a; . ./k6/.env.k6; set +a; k6 run -e TESTNAME='cart-info' -e SV='rkCRM' ./k6/k6-test.js'",
