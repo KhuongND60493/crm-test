@@ -9,7 +9,7 @@
     "test-rkcrm-cardinfo": "bash ./k6/run-rkcrm-cardinfo.sh",
     "stress-rkcrm-sv2": "sh -c 'set -a; . ./k6/.env.k6; set +a; k6 run -e TARGET_URL=\"$TARGET_URL_RKCRM_2\" -e COUPON_CODES_FILE=./cp1.txt -e RKCRM_ACTION=\"Get coupon info\" ./k6/k6-rkcrm-cardinfo-stress.js'",
     "stress-rkcrm-sv1": "sh -c 'set -a; . ./k6/.env.k6; set +a; k6 run -e TARGET_URL=\"$TARGET_URL_RKCRM\" -e COUPON_CODES_FILE=./cp1.txt -e RKCRM_ACTION=\"Get coupon info\" ./k6/k6-rkcrm-cardinfo-stress.js'",
-    "stress-rkcrm-flow-sv2": "sh -c 'set -a; . ./k6/.env.k6; set +a; k6 run -e TARGET_URL=\"$TARGET_URL_RKCRM_2\" -e COUPON_CODES_FILE=./cp1.txt -e TERMINAL_TYPE=\"$TERMINAL_TYPE\" -e FLOW_RPS=\"${FLOW_RPS:-7}\" -e PRE_VUS=\"${PRE_VUS:-400}\" -e MAX_VUS=\"${MAX_VUS:-500}\" -e DURATION=\"${DURATION:-60s}\" ./k6/k6-rkcrm-flow-stress.js'",
+    "stress-rkcrm-flow-sv2": "sh k6/run-stress-sv2.sh",
     "test-newapp-cardinfo": "bash ./k6/run-newapp-cardinfo.sh",
     "test-rkcrm-cardholder": "bash ./k6/run-rkcrm-cardholder.sh",
     "test-rkcrm-transaction": "bash ./k6/run-rkcrm-transaction.sh",

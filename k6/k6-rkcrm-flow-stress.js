@@ -28,6 +28,19 @@ function buildCardInfoPayload(eCode) {
 </Message>`;
 }
 
+function buildLogLine(step, eCode, duration, pass, body) {
+  const ts      = new Date().toISOString();
+  const stepNum = step.replace("step", "");
+  const result  = pass ? "P" : "F";
+  let content;
+  if (body === null || body === undefined || body.trim().length === 0) {
+    content = pass ? "(empty)" : "(timeout)";
+  } else {
+    content = body.trim().replace(/<\?xml[^?]*\?>\s*/i, "");
+  }
+  return `REQLOG|${ts}|${stepNum}|${eCode}|${duration}|${result}|${content}`;
+}
+
 function buildTransactionPayload(eCode) {
   const accountNumber = `0.0.${eCode.slice(6)}.922001`;
   return `<?xml version="1.0" encoding="utf-8" standalone="yes" ?>
@@ -119,6 +132,7 @@ export default function (data) {
   step1Reqs.add(1);
   step1Latency.add(res1.timings.duration);
   const ok1 = check(res1, { "step1 2xx": (r) => r.status >= 200 && r.status < 300 });
+  console.log(buildLogLine("step1", eCode, res1.timings.duration, ok1, res1.body));
   if (!ok1) {
     m.failed.add(1);
     step1Failed.add(1);
@@ -137,6 +151,7 @@ export default function (data) {
   step2Reqs.add(1);
   step2Latency.add(res2.timings.duration);
   const ok2 = check(res2, { "step2 2xx": (r) => r.status >= 200 && r.status < 300 });
+  console.log(buildLogLine("step2", eCode, res2.timings.duration, ok2, res2.body));
   if (!ok2) {
     m.failed.add(1);
     step2Failed.add(1);
@@ -155,6 +170,7 @@ export default function (data) {
   step3Reqs.add(1);
   step3Latency.add(res3.timings.duration);
   const ok3 = check(res3, { "step3 2xx": (r) => r.status >= 200 && r.status < 300 });
+  console.log(buildLogLine("step3", eCode, res3.timings.duration, ok3, res3.body));
   if (!ok3) {
     m.failed.add(1);
     step3Failed.add(1);
