@@ -12,6 +12,7 @@ for arg in "$@"; do
 done
 
 TS=$(date "+%d-%m-%Y-%H%M%S")
+mkdir -p reports
 
 K6_RUN="k6 run \
   -e TARGET_URL=\"$TARGET_URL_RKCRM_2\" \
@@ -20,7 +21,8 @@ K6_RUN="k6 run \
   -e FLOW_RPS=\"${FLOW_RPS:-7}\" \
   -e PRE_VUS=\"${PRE_VUS:-400}\" \
   -e MAX_VUS=\"${MAX_VUS:-500}\" \
-  -e DURATION=\"${DURATION:-60s}\""
+  -e DURATION=\"${DURATION:-60s}\" \
+  -e LOG_TIMESTAMP=\"$TS\""
 
 if [ "$ENABLE_LOG" = "1" ]; then
   mkdir -p logs

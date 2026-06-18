@@ -9,6 +9,8 @@ const FLOW_RPS = Number(__ENV.FLOW_RPS || __ENV.RPS || 7);
 const DURATION = __ENV.DURATION || "60s";
 const PRE_VUS = Number(__ENV.PRE_VUS || 100);
 const MAX_VUS = Number(__ENV.MAX_VUS || 500);
+const REQ_TIMEOUT    = __ENV.REQ_TIMEOUT || "60s";
+const LOG_TIMESTAMP  = __ENV.LOG_TIMESTAMP || "no-timestamp";
 
 const couponCodes = open(COUPON_CODES_FILE)
   .split(/\r?\n/)
@@ -123,6 +125,7 @@ export default function (data) {
   const res1 = http.post(TARGET_URL, buildCardInfoPayload(eCode), {
     headers,
     tags: { step: "step1" },
+    timeout: REQ_TIMEOUT,
   });
   m.reqs.add(1);
   m.latency.add(res1.timings.duration);
@@ -142,6 +145,7 @@ export default function (data) {
   const res2 = http.post(TARGET_URL, buildCardInfoPayload(eCode), {
     headers,
     tags: { step: "step2" },
+    timeout: REQ_TIMEOUT,
   });
   m.reqs.add(1);
   m.latency.add(res2.timings.duration);
@@ -161,6 +165,7 @@ export default function (data) {
   const res3 = http.post(TARGET_URL, buildTransactionPayload(eCode), {
     headers,
     tags: { step: "step3" },
+    timeout: REQ_TIMEOUT,
   });
   m.reqs.add(1);
   m.latency.add(res3.timings.duration);
@@ -254,5 +259,11 @@ export function handleSummary(data) {
     "",
   ];
 
-  return { stdout: lines.join("\n") };
+  const content = lines.join("\n");
+  const reportFile = `reports/stress-rkcrm-flow-sv2-${LOG_TIMESTAMP}.summary.txt`;
+
+  return {
+    stdout: content,
+    [reportFile]: content,
+  };
 }
