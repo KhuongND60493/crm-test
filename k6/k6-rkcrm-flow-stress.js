@@ -52,6 +52,7 @@ function buildTransactionPayload(eCode) {
     <External_ID>1003249</External_ID>
     <Amount>60000.00</Amount>
     <External_Index>461930</External_Index>
+    <Operation_Type>16</Operation_Type>
     <External_Date>2026-06-17</External_Date>
     <Transaction_Time>2026-06-17T13:35:13 +07:00</Transaction_Time>
 </Transaction>
