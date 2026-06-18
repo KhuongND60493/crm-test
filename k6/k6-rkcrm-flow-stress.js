@@ -94,12 +94,9 @@ const flowDuration  = new Trend("flow_duration", true);
 export const options = {
   scenarios: {
     flow_stress: {
-      executor: "constant-arrival-rate",
-      rate: FLOW_RPS,
-      timeUnit: "1s",
+      executor: "constant-vus",
+      vus: PRE_VUS,
       duration: DURATION,
-      preAllocatedVUs: PRE_VUS,
-      maxVUs: MAX_VUS,
     },
   },
   thresholds: {
